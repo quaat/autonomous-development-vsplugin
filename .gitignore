@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+lib/
+*.tsbuildinfo
+
+# VS Code extension packaging
+*.vsix
+
+# Test / coverage
+coverage/
+.nyc_output/
+.vscode-test/
+.vscode-test-web/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db

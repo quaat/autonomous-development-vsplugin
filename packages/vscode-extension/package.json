@@ -1,0 +1,404 @@
+{
+  "name": "semanticmatter-autonomous-development",
+  "displayName": "SemanticMatter Autonomous Development",
+  "description": "Read-only observer and visualization control plane for quaat/autonomous-development workflow runs.",
+  "version": "0.1.0",
+  "publisher": "semanticmatter",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/semanticmatter/autodev-vscode.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=18.0.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Observer features (run discovery, dashboard, artifact viewing, diffs) work in untrusted workspaces. Controller actions that execute the external controller or mutate run state (evaluate, accept-drift, cancel, archive, guided setup) require a trusted workspace."
+    },
+    "virtualWorkspaces": {
+      "supported": "limited",
+      "description": "Observer features require local filesystem access to the state home; controller actions are unavailable in virtual workspaces."
+    }
+  },
+  "activationEvents": [
+    "onView:autonomousDev.activeRuns",
+    "onView:autonomousDev.completedRuns",
+    "onView:autonomousDev.archivedRuns"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "autonomousDev",
+          "title": "Autonomous Development",
+          "icon": "resources/activity-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "autonomousDev": [
+        {
+          "id": "autonomousDev.activeRuns",
+          "name": "Active Runs",
+          "icon": "resources/activity-icon.svg",
+          "contextualTitle": "Autonomous Development"
+        },
+        {
+          "id": "autonomousDev.completedRuns",
+          "name": "Completed Runs",
+          "icon": "resources/activity-icon.svg",
+          "contextualTitle": "Autonomous Development"
+        },
+        {
+          "id": "autonomousDev.archivedRuns",
+          "name": "Archived Runs",
+          "icon": "resources/activity-icon.svg",
+          "contextualTitle": "Autonomous Development"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "autonomousDev.activeRuns",
+        "contents": "No autonomous-development runs were found for this workspace.\n\nRuns are discovered from the configured state home.\n[Set Up Controller](command:autonomousDev.setupController)\n[Refresh Runs](command:autonomousDev.refreshRuns)\n\nObserver features work without a controller. See the extension settings to override the state home."
+      }
+    ],
+    "commands": [
+      {
+        "command": "autonomousDev.openDashboard",
+        "title": "Open Workflow Dashboard",
+        "category": "Autonomous Development",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "autonomousDev.refreshRuns",
+        "title": "Refresh Runs",
+        "category": "Autonomous Development",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "autonomousDev.openOriginalFeature",
+        "title": "Open Original Feature",
+        "category": "Autonomous Development"
+      },
+      {
+        "command": "autonomousDev.openEnhancedSpec",
+        "title": "Open Enhanced Specification",
+        "category": "Autonomous Development"
+      },
+      {
+        "command": "autonomousDev.openAcceptedSpec",
+        "title": "Open Accepted Specification",
+        "category": "Autonomous Development"
+      },
+      {
+        "command": "autonomousDev.openProposedPlan",
+        "title": "Open Proposed Plan",
+        "category": "Autonomous Development"
+      },
+      {
+        "command": "autonomousDev.openAcceptedPlan",
+        "title": "Open Accepted Plan",
+        "category": "Autonomous Development"
+      },
+      {
+        "command": "autonomousDev.openLatestReview",
+        "title": "Open Latest Review",
+        "category": "Autonomous Development"
+      },
+      {
+        "command": "autonomousDev.openVerificationLog",
+        "title": "Open Verification Log",
+        "category": "Autonomous Development"
+      },
+      {
+        "command": "autonomousDev.compareSpec",
+        "title": "Compare Original Idea with Accepted Specification",
+        "category": "Autonomous Development"
+      },
+      {
+        "command": "autonomousDev.comparePlan",
+        "title": "Compare Proposed Plan with Accepted Plan",
+        "category": "Autonomous Development"
+      },
+      {
+        "command": "autonomousDev.evaluateGates",
+        "title": "Evaluate Completion Gates",
+        "category": "Autonomous Development"
+      },
+      {
+        "command": "autonomousDev.acceptDrift",
+        "title": "Accept Repository Drift",
+        "category": "Autonomous Development"
+      },
+      {
+        "command": "autonomousDev.cancelRun",
+        "title": "Cancel Run",
+        "category": "Autonomous Development"
+      },
+      {
+        "command": "autonomousDev.archiveRun",
+        "title": "Archive Run",
+        "category": "Autonomous Development"
+      },
+      {
+        "command": "autonomousDev.revealRunDirectory",
+        "title": "Reveal Run Directory",
+        "category": "Autonomous Development"
+      },
+      {
+        "command": "autonomousDev.setupController",
+        "title": "Set Up Controller",
+        "category": "Autonomous Development",
+        "icon": "$(gear)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "autonomousDev.refreshRuns",
+          "when": "view == autonomousDev.activeRuns || view == autonomousDev.completedRuns || view == autonomousDev.archivedRuns",
+          "group": "navigation@1"
+        },
+        {
+          "command": "autonomousDev.setupController",
+          "when": "view == autonomousDev.activeRuns",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "autonomousDev.openDashboard",
+          "when": "viewItem =~ /^autonomousDev.run/",
+          "group": "inline@1"
+        },
+        {
+          "command": "autonomousDev.openDashboard",
+          "when": "viewItem =~ /^autonomousDev.run/",
+          "group": "1_open@1"
+        },
+        {
+          "command": "autonomousDev.openOriginalFeature",
+          "when": "viewItem =~ /^autonomousDev.run/",
+          "group": "2_artifacts@1"
+        },
+        {
+          "command": "autonomousDev.openEnhancedSpec",
+          "when": "viewItem =~ /^autonomousDev.run/",
+          "group": "2_artifacts@2"
+        },
+        {
+          "command": "autonomousDev.openAcceptedSpec",
+          "when": "viewItem =~ /^autonomousDev.run/",
+          "group": "2_artifacts@3"
+        },
+        {
+          "command": "autonomousDev.openProposedPlan",
+          "when": "viewItem =~ /^autonomousDev.run/",
+          "group": "2_artifacts@4"
+        },
+        {
+          "command": "autonomousDev.openAcceptedPlan",
+          "when": "viewItem =~ /^autonomousDev.run/",
+          "group": "2_artifacts@5"
+        },
+        {
+          "command": "autonomousDev.openLatestReview",
+          "when": "viewItem =~ /^autonomousDev.run/",
+          "group": "2_artifacts@6"
+        },
+        {
+          "command": "autonomousDev.openVerificationLog",
+          "when": "viewItem =~ /^autonomousDev.run/",
+          "group": "2_artifacts@7"
+        },
+        {
+          "command": "autonomousDev.compareSpec",
+          "when": "viewItem =~ /^autonomousDev.run/",
+          "group": "3_compare@1"
+        },
+        {
+          "command": "autonomousDev.comparePlan",
+          "when": "viewItem =~ /^autonomousDev.run/",
+          "group": "3_compare@2"
+        },
+        {
+          "command": "autonomousDev.revealRunDirectory",
+          "when": "viewItem =~ /^autonomousDev.run/",
+          "group": "4_reveal@1"
+        },
+        {
+          "command": "autonomousDev.evaluateGates",
+          "when": "viewItem =~ /^autonomousDev.run/ && autonomousDev.trusted",
+          "group": "5_mutate@1"
+        },
+        {
+          "command": "autonomousDev.acceptDrift",
+          "when": "viewItem =~ /^autonomousDev.run/ && autonomousDev.trusted",
+          "group": "5_mutate@2"
+        },
+        {
+          "command": "autonomousDev.cancelRun",
+          "when": "viewItem == autonomousDev.run.active && autonomousDev.trusted",
+          "group": "5_mutate@3"
+        },
+        {
+          "command": "autonomousDev.archiveRun",
+          "when": "viewItem =~ /^autonomousDev.run/ && autonomousDev.trusted",
+          "group": "5_mutate@4"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "autonomousDev.evaluateGates",
+          "when": "autonomousDev.trusted"
+        },
+        {
+          "command": "autonomousDev.acceptDrift",
+          "when": "autonomousDev.trusted"
+        },
+        {
+          "command": "autonomousDev.cancelRun",
+          "when": "autonomousDev.trusted"
+        },
+        {
+          "command": "autonomousDev.archiveRun",
+          "when": "autonomousDev.trusted"
+        },
+        {
+          "command": "autonomousDev.openDashboard",
+          "when": "false"
+        },
+        {
+          "command": "autonomousDev.openOriginalFeature",
+          "when": "false"
+        },
+        {
+          "command": "autonomousDev.openEnhancedSpec",
+          "when": "false"
+        },
+        {
+          "command": "autonomousDev.openAcceptedSpec",
+          "when": "false"
+        },
+        {
+          "command": "autonomousDev.openProposedPlan",
+          "when": "false"
+        },
+        {
+          "command": "autonomousDev.openAcceptedPlan",
+          "when": "false"
+        },
+        {
+          "command": "autonomousDev.openLatestReview",
+          "when": "false"
+        },
+        {
+          "command": "autonomousDev.openVerificationLog",
+          "when": "false"
+        },
+        {
+          "command": "autonomousDev.compareSpec",
+          "when": "false"
+        },
+        {
+          "command": "autonomousDev.comparePlan",
+          "when": "false"
+        },
+        {
+          "command": "autonomousDev.revealRunDirectory",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Autonomous Development",
+      "properties": {
+        "autonomousDev.controllerPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to the `quaat/autonomous-development` `scripts/controller.py`. Leave empty to run in observer-only mode. Used only for explicit controller actions and setup checks.",
+          "scope": "machine-overridable"
+        },
+        "autonomousDev.stateHome": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Override for the state home directory. Precedence: this setting > `CLAUDE_AUTONOMOUS_STATE_HOME` environment variable > platform default (`~/.local/state/claude-autonomous` on Linux, `~/Library/Application Support/claude-autonomous` on macOS, `%LOCALAPPDATA%/claude-autonomous` on Windows).",
+          "scope": "machine-overridable"
+        },
+        "autonomousDev.pythonPath": {
+          "type": "string",
+          "default": "python3",
+          "description": "Python executable used to invoke the controller.",
+          "scope": "machine-overridable"
+        },
+        "autonomousDev.autoRefresh": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically refresh run views when state files change on disk."
+        },
+        "autonomousDev.notificationLevel": {
+          "type": "string",
+          "enum": [
+            "all",
+            "important",
+            "none"
+          ],
+          "enumDescriptions": [
+            "Notify on every phase transition, block, failed check, and completion.",
+            "Notify only on blocks, failed checks, and completion.",
+            "Suppress all run notifications."
+          ],
+          "default": "important",
+          "description": "Controls which run notifications are shown."
+        },
+        "autonomousDev.maxEventLogEntries": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 100,
+          "maximum": 100000,
+          "description": "Maximum number of events.jsonl entries retained in memory per run for the UI."
+        },
+        "autonomousDev.loadCompletedRuns": {
+          "type": "boolean",
+          "default": true,
+          "description": "Load terminal completed/blocked/cancelled runs into the Completed Runs view."
+        },
+        "autonomousDev.loadArchivedRuns": {
+          "type": "boolean",
+          "default": false,
+          "description": "Load archived runs into the Archived Runs view. Disabled by default for performance with large state homes."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p src/dashboard/webview/tsconfig.json",
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.mjs",
+    "build:test": "tsc -p tsconfig.test.json",
+    "watch": "node esbuild.mjs --watch",
+    "pretest:integration": "npm run build && npm run build:test",
+    "test:integration": "vscode-test",
+    "package": "vsce package --no-dependencies -o semanticmatter-autonomous-development.vsix",
+    "clean": "rimraf dist out *.vsix"
+  },
+  "dependencies": {
+    "@semanticmatter/core": "0.1.0",
+    "@semanticmatter/protocol": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.85.0",
+    "@vscode/test-cli": "0.0.10",
+    "@vscode/test-electron": "2.4.1",
+    "@vscode/vsce": "2.32.0"
+  }
+}

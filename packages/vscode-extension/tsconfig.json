@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "rootDir": "src",
+    "outDir": "out",
+    "types": ["node", "vscode", "mocha"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/dashboard/webview/**"],
+  "references": [{ "path": "../protocol" }, { "path": "../core" }]
+}

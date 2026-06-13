@@ -1,0 +1,423 @@
+/**
+ * Programmatic fixtures: write a throwaway state home covering every run
+ * lifecycle the dashboard must render. Used by the VS Code integration tests so
+ * discovery, grouping, model derivation, and artifact opening run against real
+ * on-disk layouts (REFERENCE.md §2–§3) without any network or controller.
+ *
+ * snake_case is deliberate — these files mirror what quaat/autonomous-development
+ * actually writes; core normalizes them to the camelCase domain types.
+ */
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+
+export type Scenario =
+  | 'initialized'
+  | 'implementing'
+  | 'verificationFailed'
+  | 'changesRequired'
+  | 'adversarialRequired'
+  | 'complete'
+  | 'blocked'
+  | 'cancelled'
+  | 'archived'
+  | 'malformed';
+
+export interface Fixtures {
+  /** Resolved state home (`<root>/state`), to point `autonomousDev.stateHome` at. */
+  readonly stateHome: string;
+  /** A repo root holding a legacy in-repo `.ai/autonomous-development` run. */
+  readonly legacyRepoRoot: string;
+  /** runId for each scenario (equal to the scenario key for easy assertions). */
+  readonly runIds: Record<Scenario, string>;
+  readonly repoId: string;
+  /** Absolute path to a run directory. */
+  runDir(runId: string): string;
+  cleanup(): void;
+}
+
+const REPO_ID = 'demo-repo';
+
+function write(path: string, content: string): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, content);
+}
+
+function passingReview(): string {
+  return JSON.stringify({
+    verdict: 'pass',
+    confidence: 0.92,
+    summary: 'No blocking issues found.',
+    findings: [
+      {
+        id: 'F-LOW',
+        severity: 'low',
+        category: 'style',
+        file: 'src/app.ts',
+        line_start: 7,
+        description: 'Nit.'
+      }
+    ]
+  });
+}
+
+/** Write one run under `<stateHome>/repositories/<repoId>/runs/<runId>/`. */
+function writeRun(
+  stateHome: string,
+  runId: string,
+  state: Record<string, unknown> | string,
+  files: Record<string, string> = {}
+): void {
+  const runDir = join(stateHome, 'repositories', REPO_ID, 'runs', runId);
+  write(
+    join(runDir, 'run-state.json'),
+    typeof state === 'string' ? state : JSON.stringify(state, null, 2)
+  );
+  for (const [name, content] of Object.entries(files)) {
+    write(join(runDir, name), content);
+  }
+}
+
+function baseState(runId: string, overrides: Record<string, unknown>): Record<string, unknown> {
+  return {
+    schema_version: 2,
+    run_id: runId,
+    status: 'active',
+    phase: 'initialized',
+    feature: `Feature for ${runId}`,
+    label: runId,
+    created_at: '2026-06-12T10:00:00Z',
+    updated_at: '2026-06-12T11:00:00Z',
+    repository: { id: REPO_ID, display_name: 'Demo Repo', worktree_path: '/work/demo' },
+    max_review_rounds: 3,
+    review_round: 0,
+    artifacts: {},
+    verification: { checks: [] },
+    reviews: [],
+    adversarial_reviews: [],
+    risk: { requires_adversarial_review: false, reasons: [] },
+    ...overrides
+  };
+}
+
+const FEATURE_MD = '# Original feature\n\nBuild the thing.\n';
+const ENHANCE_JSON = JSON.stringify({
+  title: 'The thing',
+  problem_statement: 'Users cannot do the thing.',
+  functional_requirements: ['Render the thing', 'Persist the thing'],
+  acceptance_criteria: [
+    { id: 'AC-1', criterion: 'The thing renders' },
+    { id: 'AC-2', criterion: 'The thing persists' }
+  ],
+  assumptions: ['a1'],
+  open_questions: [],
+  risks: ['It might break'],
+  non_goals: ['Not rebuilding everything']
+});
+const SPEC_MD = '# Accepted specification\n\nThe thing, reconciled.\n';
+const PLAN_JSON = JSON.stringify({
+  summary: 'Implement the thing in three steps.',
+  implementation_steps: ['Step one', 'Step two'],
+  files_expected_to_change: ['src/app.ts', 'src/thing.ts'],
+  test_strategy: { unit: 'cover the thing', integration: 'open the dashboard' },
+  rollback_strategy: ['Revert the commit'],
+  risks: ['Plan risk'],
+  non_goals: ['No plan rewrite']
+});
+const PLAN_MD = '# Accepted plan\n\n1. Do s1\n2. Do s2\n';
+
+const FULL_ARTIFACTS = {
+  feature_request: 'feature-request.md',
+  enhance: 'feature-spec.codex.json',
+  accepted_spec: 'accepted-spec.md',
+  plan: 'implementation-plan.codex.json',
+  accepted_plan: 'accepted-plan.md'
+};
+
+const FULL_ARTIFACT_FILES: Record<string, string> = {
+  'feature-request.md': FEATURE_MD,
+  'feature-spec.codex.json': ENHANCE_JSON,
+  'accepted-spec.md': SPEC_MD,
+  'implementation-plan.codex.json': PLAN_JSON,
+  'accepted-plan.md': PLAN_MD
+};
+
+function passingVerification(): Record<string, unknown> {
+  return {
+    passed: true,
+    checks: [
+      {
+        name: 'unit',
+        command: ['npm', 'test'],
+        exit_code: 0,
+        log: 'verification/unit.log',
+        started_at: '2026-06-12T10:30:00Z',
+        completed_at: '2026-06-12T10:31:00Z'
+      }
+    ]
+  };
+}
+
+export function buildFixtures(): Fixtures {
+  const root = mkdtempSync(join(tmpdir(), 'autodev-fixtures-'));
+  const stateHome = join(root, 'state');
+
+  // 1. initialized — created, not yet enhanced → next: run-enhance.
+  writeRun(
+    stateHome,
+    'initialized',
+    baseState('initialized', {
+      phase: 'initialized',
+      artifacts: { feature_request: 'feature-request.md' }
+    }),
+    { 'feature-request.md': FEATURE_MD }
+  );
+
+  // 2. implementing — spec+plan accepted, no checks yet → next: run-verification.
+  writeRun(
+    stateHome,
+    'implementing',
+    baseState('implementing', {
+      phase: 'implementing',
+      artifacts: FULL_ARTIFACTS
+    }),
+    FULL_ARTIFACT_FILES
+  );
+
+  // 3. verificationFailed — checks recorded and failing → next: fix-verification.
+  writeRun(
+    stateHome,
+    'verificationFailed',
+    baseState('verificationFailed', {
+      phase: 'verification',
+      artifacts: FULL_ARTIFACTS,
+      verification: {
+        passed: false,
+        checks: [
+          {
+            name: 'unit',
+            command: ['npm', 'test'],
+            exit_code: 1,
+            log: 'verification/unit.log',
+            started_at: '2026-06-12T10:30:00Z',
+            completed_at: '2026-06-12T10:31:00Z'
+          }
+        ]
+      }
+    }),
+    { ...FULL_ARTIFACT_FILES, 'verification/unit.log': 'FAIL: 1 test failed\n' }
+  );
+
+  // 4. changesRequired — review verdict not pass, severe finding with file+line.
+  writeRun(
+    stateHome,
+    'changesRequired',
+    baseState('changesRequired', {
+      phase: 'review',
+      review_round: 1,
+      artifacts: { ...FULL_ARTIFACTS, review: 'review-01.codex.json' },
+      verification: passingVerification(),
+      reviews: [{ round: 1, path: 'review-01.codex.json', verdict: 'changes_requested' }]
+    }),
+    {
+      ...FULL_ARTIFACT_FILES,
+      'verification/unit.log': 'ok\n',
+      'review-01.codex.json': JSON.stringify({
+        verdict: 'changes_requested',
+        confidence: 0.7,
+        summary: 'One correctness issue.',
+        findings: [
+          {
+            id: 'F-1',
+            severity: 'high',
+            category: 'correctness',
+            file: 'src/app.ts',
+            line_start: 42,
+            description: 'Off-by-one in the loop bound.',
+            evidence: 'for (i <= n) iterates one past the end',
+            recommended_fix: 'Use i < n.'
+          }
+        ],
+        verification_gaps: ['No integration test covers the retry path.'],
+        acceptance_criteria_assessment: [
+          {
+            id: 'AC-1',
+            status: 'partially_satisfied',
+            evidence: 'Happy path covered; error path unverified.'
+          }
+        ]
+      }),
+      // Legacy free-form triage note — surfaced read-only, never parsed for dispositions.
+      'triage-01.md': '# Triage round 1\n\n- F-1: accepted — will fix the off-by-one.\n',
+      // A malformed interior line must surface as a precise, non-fatal diagnostic.
+      'events.jsonl':
+        [
+          JSON.stringify({
+            schemaVersion: 1,
+            sequence: 1,
+            timestamp: '2026-06-12T10:40:00Z',
+            runId: 'changesRequired',
+            repositoryId: REPO_ID,
+            phase: 'review',
+            source: 'controller',
+            type: 'review.started',
+            payload: {}
+          }),
+          '{ this line is not valid JSON',
+          JSON.stringify({
+            schemaVersion: 1,
+            sequence: 2,
+            timestamp: '2026-06-12T10:41:00Z',
+            runId: 'changesRequired',
+            repositoryId: REPO_ID,
+            phase: 'review',
+            source: 'controller',
+            type: 'review.completed',
+            payload: { verdict: 'changes_requested' }
+          }),
+          // Structured disposition for F-1 — surfaced on the finding "when present"
+          // (§9), distinct from the read-only triage-01.md markdown above.
+          JSON.stringify({
+            schemaVersion: 1,
+            sequence: 3,
+            timestamp: '2026-06-12T10:42:00Z',
+            runId: 'changesRequired',
+            repositoryId: REPO_ID,
+            phase: 'review',
+            source: 'controller',
+            type: 'review.finding.triaged',
+            payload: { findingId: 'F-1', disposition: 'accepted' }
+          })
+        ].join('\n') + '\n'
+    }
+  );
+
+  // 5. adversarialRequired — review pass, no severe findings, risk gate set.
+  writeRun(
+    stateHome,
+    'adversarialRequired',
+    baseState('adversarialRequired', {
+      phase: 'adversarial-review',
+      review_round: 1,
+      artifacts: { ...FULL_ARTIFACTS, review: 'review-01.codex.json' },
+      verification: passingVerification(),
+      reviews: [{ round: 1, path: 'review-01.codex.json', verdict: 'pass' }],
+      adversarial_reviews: [],
+      risk: { requires_adversarial_review: true, reasons: ['Touches authentication'] }
+    }),
+    {
+      ...FULL_ARTIFACT_FILES,
+      'verification/unit.log': 'ok\n',
+      'review-01.codex.json': passingReview()
+    }
+  );
+
+  // 6. complete — every gate satisfied; carries an event log + both compare sides.
+  writeRun(
+    stateHome,
+    'complete',
+    baseState('complete', {
+      status: 'complete',
+      phase: 'complete',
+      review_round: 1,
+      artifacts: { ...FULL_ARTIFACTS, review: 'review-01.codex.json' },
+      verification: passingVerification(),
+      reviews: [{ round: 1, path: 'review-01.codex.json', verdict: 'pass' }]
+    }),
+    {
+      ...FULL_ARTIFACT_FILES,
+      'verification/unit.log': 'ok\n',
+      'review-01.codex.json': passingReview(),
+      'events.jsonl':
+        [
+          JSON.stringify({
+            schemaVersion: 1,
+            sequence: 1,
+            timestamp: '2026-06-12T10:00:00Z',
+            runId: 'complete',
+            repositoryId: REPO_ID,
+            phase: 'initialized',
+            source: 'controller',
+            type: 'run.created',
+            payload: { label: 'complete' }
+          }),
+          JSON.stringify({
+            schemaVersion: 1,
+            sequence: 2,
+            timestamp: '2026-06-12T10:31:00Z',
+            runId: 'complete',
+            repositoryId: REPO_ID,
+            phase: 'verification',
+            source: 'controller',
+            type: 'verification.completed',
+            payload: { name: 'unit', exitCode: 0 }
+          })
+        ].join('\n') + '\n'
+    }
+  );
+
+  // 7. blocked — review budget exhausted → blockingReason set.
+  writeRun(
+    stateHome,
+    'blocked',
+    baseState('blocked', {
+      status: 'blocked',
+      phase: 'review-budget-exhausted',
+      review_round: 3,
+      artifacts: FULL_ARTIFACTS
+    }),
+    FULL_ARTIFACT_FILES
+  );
+
+  // 8. cancelled.
+  writeRun(
+    stateHome,
+    'cancelled',
+    baseState('cancelled', { status: 'cancelled', phase: 'cancelled' })
+  );
+
+  // 9. archived.
+  writeRun(stateHome, 'archived', baseState('archived', { status: 'archived', phase: 'archived' }));
+
+  // 10. malformed — invalid JSON must yield a diagnostic, not a crash.
+  writeRun(stateHome, 'malformed', '{ this is not valid json ');
+
+  // 11. legacy — in-repo `.ai/autonomous-development` with markdown-only triage.
+  const legacyRepoRoot = join(root, 'legacy-repo');
+  const legacyDir = join(legacyRepoRoot, '.ai', 'autonomous-development');
+  write(
+    join(legacyDir, 'run-state.json'),
+    JSON.stringify(
+      baseState('legacy-run', {
+        phase: 'review',
+        artifacts: { ...FULL_ARTIFACTS, review: 'review-01.codex.json' },
+        verification: passingVerification(),
+        reviews: [{ round: 1, verdict: 'changes_requested' }]
+      }),
+      null,
+      2
+    )
+  );
+  write(join(legacyDir, 'triage-01.md'), '# Triage round 1\n\n- F-1: accepted\n');
+
+  return {
+    stateHome,
+    legacyRepoRoot,
+    repoId: REPO_ID,
+    runIds: {
+      initialized: 'initialized',
+      implementing: 'implementing',
+      verificationFailed: 'verificationFailed',
+      changesRequired: 'changesRequired',
+      adversarialRequired: 'adversarialRequired',
+      complete: 'complete',
+      blocked: 'blocked',
+      cancelled: 'cancelled',
+      archived: 'archived',
+      malformed: 'malformed'
+    },
+    runDir: (runId: string) => join(stateHome, 'repositories', REPO_ID, 'runs', runId),
+    cleanup: () => rmSync(root, { recursive: true, force: true })
+  };
+}

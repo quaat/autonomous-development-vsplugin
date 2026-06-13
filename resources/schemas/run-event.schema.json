@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://semanticmatter.dev/schemas/run-event.schema.json",
+  "title": "RunEvent",
+  "description": "A single append-only event in events.jsonl. Unknown event types and unknown extra envelope fields are preserved and ignored for forward compatibility.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "sequence",
+    "timestamp",
+    "runId",
+    "repositoryId",
+    "phase",
+    "source",
+    "type",
+    "payload"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Envelope schema version. Bumped only on breaking changes."
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Monotonically increasing per-run sequence number."
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO-8601 timestamp of the event."
+    },
+    "runId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repositoryId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "phase": {
+      "type": "string",
+      "description": "Free-form workflow phase string at emission time."
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Emitter, e.g. controller, extension, claude-agent, codex."
+    },
+    "type": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Event type. Known v1 types are documented in PROTOCOL.md; any other string is accepted and preserved."
+    },
+    "correlationId": {
+      "type": "string",
+      "description": "Optional id correlating related events."
+    },
+    "payload": {
+      "description": "Event-type-specific payload. May be any JSON value, including null."
+    }
+  }
+}

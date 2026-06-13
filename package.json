@@ -1,0 +1,40 @@
+{
+  "name": "semanticmatter-autonomous-development",
+  "version": "0.1.0",
+  "description": "VS Code extension: a read-only observer and visualization control plane for quaat/autonomous-development workflow runs.",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "workspaces": [
+    "packages/protocol",
+    "packages/core",
+    "packages/vscode-extension"
+  ],
+  "scripts": {
+    "clean": "rimraf packages/*/dist packages/*/out packages/vscode-extension/*.vsix",
+    "build:libs": "tsc -b packages/protocol packages/core",
+    "build:ext": "npm run build --workspace packages/vscode-extension",
+    "build": "npm run build:libs && npm run build:ext",
+    "typecheck": "npm run build:libs && npm run typecheck --workspace packages/vscode-extension",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run build:libs && npm run test --workspace packages/protocol && npm run test --workspace packages/core",
+    "test:integration": "npm run build:libs && npm run test:integration --workspace packages/vscode-extension",
+    "package": "npm run build:libs && npm run package --workspace packages/vscode-extension"
+  },
+  "devDependencies": {
+    "@types/mocha": "10.0.10",
+    "@types/node": "18.19.130",
+    "@typescript-eslint/eslint-plugin": "7.18.0",
+    "@typescript-eslint/parser": "7.18.0",
+    "esbuild": "0.21.5",
+    "eslint": "8.57.0",
+    "mocha": "11.7.6",
+    "prettier": "3.8.4",
+    "rimraf": "5.0.10",
+    "typescript": "5.4.5"
+  }
+}

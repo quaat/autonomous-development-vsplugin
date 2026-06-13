@@ -1,0 +1,17 @@
+{
+  "name": "@semanticmatter/protocol",
+  "version": "0.1.0",
+  "description": "Versioned RunEvent protocol and append-only events.jsonl utilities. No third-party runtime dependencies; never imports the vscode API.",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "npm run build:test && mocha",
+    "clean": "rimraf dist out"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "@semanticmatter/core",
+  "version": "0.1.0",
+  "description": "VS Code-free workflow semantics: state-home resolution, run discovery, schema-v2 parsing, and the shared workflow evaluator (completion gates + recommended next action). No third-party runtime dependencies.",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.json",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "npm run build:test && mocha",
+    "clean": "rimraf dist out"
+  },
+  "dependencies": {
+    "@semanticmatter/protocol": "0.1.0"
+  }
+}

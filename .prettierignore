@@ -1,0 +1,10 @@
+node_modules/
+**/dist/
+**/out/
+**/*.vsix
+package-lock.json
+resources/
+**/test/fixtures/
+coverage/
+.vscode-test/
+.claude/

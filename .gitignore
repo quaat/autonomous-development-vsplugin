@@ -23,3 +23,19 @@ npm-debug.log*
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# Local Claude settings (per-developer)
+.claude/settings.local.json
+
+# Sandbox-masked host config surfaced as /dev/null device nodes (not real files)
+/.bash_profile
+/.bashrc
+/.gitconfig
+/.gitmodules
+/.idea
+/.mcp.json
+/.profile
+/.ripgreprc
+/.vscode
+/.zprofile
+/.zshrc

@@ -3,6 +3,25 @@
 All notable changes to the SemanticMatter Autonomous Development extension are
 documented here. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## 0.3.0
+
+Compatibility target unchanged from 0.2.0: `quaat/autonomous-development`
+**v0.3.0**, run-state `schema_version` 2 (versions 1 and 2 supported).
+
+### Added
+
+- **Start Run command.** Start a new autonomous-development run without leaving
+  VS Code: the `+` button in the _Active Runs_ view title (and the **Autonomous
+  Development: Start Run** palette command) prompts for a feature description,
+  then opens an integrated terminal in the repository, launches the Claude
+  driver (`claude --plugin-dir …`), and pre-fills the
+  `/autonomous-development:autonomous-feature` skill command. The command is
+  typed but not executed — the user presses Enter to launch, keeping a human in
+  the loop. Because the skill drives its own `init`, this avoids creating an
+  orphan run that nothing drives. The feature text is POSIX single-quoted before
+  it reaches the shell, and no permission-bypass flags are ever passed. Available
+  only in trusted workspaces, consistent with the other controller actions.
+
 ## 0.2.0
 
 Compatibility target: `quaat/autonomous-development` **v0.3.0** (revision

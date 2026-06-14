@@ -2,7 +2,7 @@
   "name": "semanticmatter-autonomous-development",
   "displayName": "SemanticMatter Autonomous Development",
   "description": "Read-only observer and visualization control plane for quaat/autonomous-development workflow runs.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "semanticmatter",
   "license": "MIT",
   "repository": {
@@ -33,7 +33,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "Observer features (run discovery, dashboard, artifact viewing, diffs) work in untrusted workspaces. Controller actions that execute the external controller or mutate run state (evaluate, accept-drift, cancel, archive, guided setup) require a trusted workspace."
+      "description": "Observer features (run discovery, dashboard, artifact viewing, diffs) work in untrusted workspaces. Controller actions that execute the external controller or mutate run state (start run, evaluate, accept-drift, cancel, archive, guided setup) require a trusted workspace."
     },
     "virtualWorkspaces": {
       "supported": "limited",
@@ -84,6 +84,12 @@
       }
     ],
     "commands": [
+      {
+        "command": "autonomousDev.startRun",
+        "title": "Start Run",
+        "category": "Autonomous Development",
+        "icon": "$(add)"
+      },
       {
         "command": "autonomousDev.openDashboard",
         "title": "Open Workflow Dashboard",
@@ -175,6 +181,11 @@
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "autonomousDev.startRun",
+          "when": "view == autonomousDev.activeRuns && autonomousDev.trusted",
+          "group": "navigation@0"
+        },
         {
           "command": "autonomousDev.refreshRuns",
           "when": "view == autonomousDev.activeRuns || view == autonomousDev.completedRuns || view == autonomousDev.archivedRuns",
@@ -269,6 +280,10 @@
         }
       ],
       "commandPalette": [
+        {
+          "command": "autonomousDev.startRun",
+          "when": "autonomousDev.trusted"
+        },
         {
           "command": "autonomousDev.evaluateGates",
           "when": "autonomousDev.trusted"

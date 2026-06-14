@@ -156,6 +156,7 @@ export {
   buildControllerCommand,
   isMutatingSubcommand,
   type ControllerSubcommand,
+  type ControllerInitMode,
   type ControllerContext,
   type ControllerOptions,
   type ControllerCommandLine

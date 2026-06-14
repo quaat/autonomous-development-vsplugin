@@ -86,4 +86,43 @@ describe('buildControllerCommand (REFERENCE §10 adapter contract)', () => {
     assert.equal(isMutatingSubcommand('archive-run'), true);
     assert.equal(isMutatingSubcommand('show-run'), false);
   });
+
+  it('init builds --feature and is mutating, run-id-free', () => {
+    const cmd = buildControllerCommand(ctx, 'init', { feature: 'Add CSV export' });
+    assert.equal(cmd.mutating, true);
+    assert.deepEqual(cmd.args, [
+      '/opt/autodev/scripts/controller.py',
+      '--project-root',
+      '/work/repo',
+      '--state-dir',
+      '/state',
+      'init',
+      '--feature',
+      'Add CSV export'
+    ]);
+    // init creates a new run; it must never carry a --run-id.
+    assert.ok(!cmd.args.includes('--run-id'));
+    assert.equal(isMutatingSubcommand('init'), true);
+  });
+
+  it('init appends optional --label, --mode, --max-review-rounds in order', () => {
+    const { args } = buildControllerCommand(ctx, 'init', {
+      feature: 'F',
+      label: 'My run',
+      mode: 'rigorous',
+      maxReviewRounds: 3
+    });
+    const at = (flag: string): string | undefined => args[args.indexOf(flag) + 1];
+    assert.equal(at('--label'), 'My run');
+    assert.equal(at('--mode'), 'rigorous');
+    assert.equal(at('--max-review-rounds'), '3');
+  });
+
+  it('init throws without a feature description', () => {
+    assert.throws(() => buildControllerCommand(ctx, 'init'), /requires a feature description/);
+    assert.throws(
+      () => buildControllerCommand(ctx, 'init', { feature: '' }),
+      /requires a feature description/
+    );
+  });
 });

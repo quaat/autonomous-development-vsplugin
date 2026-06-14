@@ -1,6 +1,6 @@
 {
   "name": "semanticmatter-autonomous-development",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "VS Code extension: a read-only observer and visualization control plane for quaat/autonomous-development workflow runs.",
   "private": true,
   "license": "MIT",

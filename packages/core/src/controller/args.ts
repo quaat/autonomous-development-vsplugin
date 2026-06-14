@@ -8,6 +8,7 @@
 
 export type ControllerSubcommand =
   | 'doctor'
+  | 'init'
   | 'list-runs'
   | 'show-run'
   | 'status'
@@ -16,7 +17,11 @@ export type ControllerSubcommand =
   | 'cancel'
   | 'archive-run';
 
+/** Workflow rigor modes accepted by `controller.py init --mode`. */
+export type ControllerInitMode = 'auto' | 'lean' | 'standard' | 'rigorous';
+
 const MUTATING: ReadonlySet<ControllerSubcommand> = new Set([
+  'init',
   'evaluate',
   'accept-drift',
   'cancel',
@@ -57,6 +62,14 @@ export interface ControllerOptions {
   readonly reason?: string;
   /** Append --json (list-runs/show-run/status). */
   readonly json?: boolean;
+  /** init: required feature description (--feature). */
+  readonly feature?: string;
+  /** init: workflow rigor mode (--mode). */
+  readonly mode?: ControllerInitMode;
+  /** init: human-readable label stored in state (--label). */
+  readonly label?: string;
+  /** init: review-round budget 1–5 (--max-review-rounds). */
+  readonly maxReviewRounds?: number;
 }
 
 export interface ControllerCommandLine {
@@ -79,6 +92,9 @@ export function buildControllerCommand(
   if (RUN_SCOPED.has(sub) && (!options.runId || options.runId.length === 0)) {
     throw new Error(`Controller subcommand "${sub}" requires an explicit runId`);
   }
+  if (sub === 'init' && (!options.feature || options.feature.length === 0)) {
+    throw new Error('Controller subcommand "init" requires a feature description');
+  }
 
   // --run-id is a GLOBAL option (before the subcommand). Passing it globally
   // works for every run-scoped command; we never add a subcommand-level
@@ -94,6 +110,15 @@ export function buildControllerCommand(
   args.push(sub);
 
   switch (sub) {
+    case 'init':
+      // `feature` is guaranteed non-empty by the guard above.
+      args.push('--feature', options.feature as string);
+      if (options.label && options.label.length > 0) args.push('--label', options.label);
+      if (options.mode) args.push('--mode', options.mode);
+      if (options.maxReviewRounds !== undefined) {
+        args.push('--max-review-rounds', String(options.maxReviewRounds));
+      }
+      break;
     case 'list-runs':
       if (options.json !== false) args.push('--json');
       if (options.all) args.push('--all');

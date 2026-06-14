@@ -53,6 +53,29 @@ async function pickRun(store: RunStore): Promise<DiscoveredRun | undefined> {
   return picked?.run;
 }
 
+/** Resolve the repository a new run should be created in (FR: scope to workspace). */
+async function resolveProjectRoot(): Promise<string | undefined> {
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  if (folders.length === 0) {
+    void vscode.window.showErrorMessage(
+      'Open a folder (a git repository) before starting an autonomous-development run.'
+    );
+    return undefined;
+  }
+  if (folders.length === 1) {
+    return folders[0]?.uri.fsPath;
+  }
+  const picked = await vscode.window.showQuickPick(
+    folders.map((folder) => ({
+      label: folder.name,
+      description: folder.uri.fsPath,
+      path: folder.uri.fsPath
+    })),
+    { title: 'Select the repository to start a run in' }
+  );
+  return picked?.path;
+}
+
 async function resolveTarget(store: RunStore, arg: CommandArg): Promise<DiscoveredRun | undefined> {
   if (arg) {
     if (isRun(arg)) {
@@ -67,7 +90,11 @@ async function resolveTarget(store: RunStore, arg: CommandArg): Promise<Discover
 
 export function registerCommands(deps: CommandDeps): void {
   const { context, store, service, log } = deps;
-  const controllerDeps: controller.ControllerCommandDeps = { service, refresh: deps.refresh };
+  const controllerDeps: controller.ControllerCommandDeps = {
+    service,
+    getConfig: deps.getConfig,
+    refresh: deps.refresh
+  };
 
   /** Wrap a run-scoped artifact handler with target resolution + error reporting. */
   const runScoped =
@@ -99,6 +126,13 @@ export function registerCommands(deps: CommandDeps): void {
     })
   );
   register('autonomousDev.refreshRuns', () => deps.refresh());
+  register('autonomousDev.startRun', async () => {
+    const projectRoot = await resolveProjectRoot();
+    if (!projectRoot) {
+      return;
+    }
+    await controller.startRun(projectRoot, controllerDeps);
+  });
 
   register('autonomousDev.openOriginalFeature', runScoped(artifacts.openOriginalFeature));
   register('autonomousDev.openEnhancedSpec', runScoped(artifacts.openEnhancedSpec));

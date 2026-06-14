@@ -1,37 +1,76 @@
 /**
- * Safe resolution of artifact paths recorded in run-state. Artifact references
- * are run-dir-relative or absolute (docs/REFERENCE.md §3). Relative references
- * must not escape the run directory.
+ * Filesystem confinement for paths recorded in run-state or review findings.
+ *
+ * Artifact pointers and finding source paths are controller-generated and must
+ * stay inside their owning directory (reference state.py:resolve_artifact_path).
+ * A crafted or legacy run-state could otherwise aim a pointer at an arbitrary
+ * local file and exfiltrate its contents. We mirror the reference: resolve the
+ * reference (absolute OR relative), canonicalize symlinks, and require the
+ * result to remain inside the canonical base directory — rejecting both
+ * absolute-outside references and `..` traversal, and following symlinks so an
+ * in-base symlink that points outside is also rejected.
  */
 
-import { isAbsolute, relative, resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 export interface ArtifactResolution {
-  /** Absolute path on disk, or undefined if the reference is unsafe. */
+  /** Absolute, symlink-canonicalized path on disk, or undefined if unsafe. */
   readonly path?: string;
-  /** Set when resolution was rejected (relative path escaping the run dir). */
+  /** Set when resolution was rejected (reference escapes the base directory). */
   readonly escaped?: boolean;
 }
 
 /**
- * Resolve an artifact reference against a run directory.
- * - Absolute references are returned as-is (the user's controller wrote them).
- * - Relative references are resolved under `runDir` and rejected if they escape.
+ * Canonicalize a path, following symlinks. For a path that does not yet exist,
+ * canonicalize the nearest existing ancestor and lexically append the missing
+ * tail — matching Python's `Path.resolve(strict=False)`, so symlinks in the
+ * existing prefix are still resolved and cannot be used to escape.
  */
-export function resolveArtifactPath(runDir: string, reference: string): ArtifactResolution {
+function canonicalize(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    const parent = dirname(p);
+    if (parent === p) {
+      return p;
+    }
+    return resolve(canonicalize(parent), basename(p));
+  }
+}
+
+/**
+ * Resolve `reference` against `baseDir` and confine the result to it.
+ * - Empty reference -> `{}` (nothing to open).
+ * - Absolute and relative references are both resolved, canonicalized, and
+ *   required to stay inside the canonical `baseDir`.
+ * - On escape -> `{ escaped: true }` (the caller disables the open/diff action).
+ */
+export function confineToDirectory(baseDir: string, reference: string): ArtifactResolution {
   if (reference.length === 0) {
     return {};
   }
-  if (isAbsolute(reference)) {
-    return { path: resolve(reference) };
+  const candidateRaw = isAbsolute(reference) ? resolve(reference) : resolve(baseDir, reference);
+  const canonicalBase = canonicalize(resolve(baseDir));
+  const canonicalCandidate = canonicalize(candidateRaw);
+  if (canonicalCandidate === canonicalBase) {
+    return { path: canonicalCandidate };
   }
-  const runDirAbs = resolve(runDir);
-  const candidate = resolve(runDirAbs, reference);
-  const rel = relative(runDirAbs, candidate);
-  if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) {
-    return { path: candidate };
+  const rel = relative(canonicalBase, canonicalCandidate);
+  const firstSegment = rel.split(sep)[0];
+  if (rel !== '' && firstSegment !== '..' && !isAbsolute(rel)) {
+    return { path: canonicalCandidate };
   }
   return { escaped: true };
+}
+
+/**
+ * Resolve an artifact reference against a run directory, confined to it.
+ * Artifact references are run-dir-relative or absolute (docs/REFERENCE.md §3);
+ * either way the resolved path must stay inside the run directory.
+ */
+export function resolveArtifactPath(runDir: string, reference: string): ArtifactResolution {
+  return confineToDirectory(runDir, reference);
 }
 
 /** Conventional run-dir-relative names used when an artifact key is absent. */

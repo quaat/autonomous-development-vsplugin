@@ -43,6 +43,7 @@ export {
 
 export {
   resolveArtifactPath,
+  confineToDirectory,
   CONVENTIONAL_ARTIFACT_NAMES,
   type ArtifactResolution
 } from './artifacts';

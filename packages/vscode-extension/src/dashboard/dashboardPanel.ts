@@ -1,7 +1,7 @@
 import { basename, join } from 'node:path';
 
 import * as vscode from 'vscode';
-import { loadEventLog, type DiscoveredRun } from '@semanticmatter/core';
+import { confineToDirectory, loadEventLog, type DiscoveredRun } from '@semanticmatter/core';
 
 import type { ExtensionConfig } from '../config';
 import type { OutputLog } from '../output';
@@ -146,14 +146,13 @@ export class DashboardPanel {
     const worktree = run.state?.repository.worktreePath;
     const bases = [worktree, run.runDir].filter((b): b is string => Boolean(b));
     for (const base of bases) {
-      const candidate = join(base, file);
-      try {
-        return vscode.Uri.file(candidate);
-      } catch {
-        // try next base
+      const resolved = confineToDirectory(base, file);
+      if (resolved.path) {
+        return vscode.Uri.file(resolved.path);
       }
     }
-    return vscode.Uri.file(file);
+    this.log.warn(`Refused to open path outside the run/worktree: ${file}`);
+    return undefined;
   }
 
   private async openFinding(run: DiscoveredRun, file: string, line?: number): Promise<void> {

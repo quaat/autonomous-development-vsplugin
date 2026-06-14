@@ -1,10 +1,25 @@
 # Roadmap
 
-This first release is deliberately an **observer + protocol foundation**. It
+This release is deliberately an **observer + protocol foundation**. It
 visualizes and safely controls runs created by the existing
 `quaat/autonomous-development` workflow, and it introduces the typed `RunEvent`
 log so later live integrations have a stable contract to emit against. It does
 **not** orchestrate Claude or Codex directly.
+
+## Shipped (v0.2)
+
+Compatibility target: controller **v0.3.0**, run-state `schema_version` 2 (1 and 2
+supported). See [docs/REFERENCE.md](docs/REFERENCE.md) and the pinned
+[resources/reference-lock.json](resources/reference-lock.json).
+
+- Cumulative review ledger with resolution provenance, acceptance-criteria matrix
+  (fail-closed: only `satisfied` is non-blocking), review checkpoints / delta
+  context, Codex token usage, and mode-aware next action — all from the shared
+  core evaluator.
+- Completion gates fail closed, including a `pass` verdict that coexists with
+  blocking findings or unsatisfied criteria.
+- Compatibility guard: mirrored authoritative schemas, checksum-pinned and
+  verified by `npm run verify:reference`.
 
 ## Shipped (v0.1)
 

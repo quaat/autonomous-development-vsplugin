@@ -1,7 +1,14 @@
 /**
  * Completion-gate logic — replicates `cmd_evaluate` exactly
- * (docs/REFERENCE.md §6). The gate FAILS (run stays active) if ANY check below
- * fails. It counts severe findings *raw* and never consults triage dispositions.
+ * (docs/REFERENCE.md §6; controller.py `cmd_evaluate`, ~lines 2461-2566). The
+ * gate FAILS (run stays active) if ANY check below fails.
+ *
+ * Severe findings come from the cumulative finding ledger when it is non-empty
+ * (`cumulative_unresolved_severe`, fail closed), otherwise from the latest
+ * review file's raw severe findings. The gate never consults triage dispositions
+ * directly — the controller folds those into the cumulative ledger before this
+ * runs. Ordered within the review block: review-not-pass, severe-findings,
+ * acceptance-criteria-unsatisfied, then the pass+blocking contradiction.
  */
 
 export type GateFailureCode =
@@ -12,6 +19,8 @@ export type GateFailureCode =
   | 'no-reviews'
   | 'review-not-pass'
   | 'severe-findings'
+  | 'acceptance-criteria-unsatisfied'
+  | 'review-inconsistent-pass'
   | 'adversarial-required';
 
 export interface GateFailure {
@@ -27,7 +36,22 @@ export interface GateFacts {
   readonly hasReviews: boolean;
   readonly latestReviewReadable: boolean;
   readonly latestReviewVerdict?: string;
+  /** Severe-finding count from the latest review file (back-compat fallback). */
   readonly severeFindingCount: number;
+  /**
+   * When true, use {@link cumulativeSevereFindingCount} for the severe-findings
+   * gate instead of {@link severeFindingCount} (the controller prefers the
+   * cumulative ledger when `cumulative_findings` is non-empty).
+   */
+  readonly hasCumulativeFindings?: boolean;
+  /** Count from `cumulative_unresolved_severe` (used when the ledger exists). */
+  readonly cumulativeSevereFindingCount?: number;
+  /** `id [severity/category] snippet; ...` for the severe-findings message. */
+  readonly severeFindingsDescription?: string;
+  /** Count from `blocking_acceptance_criteria` (status != satisfied). */
+  readonly blockingAcceptanceCriteriaCount?: number;
+  /** `id [status]; ...` for the acceptance-criteria message. */
+  readonly blockingAcceptanceCriteriaDescription?: string;
   readonly requiresAdversarial: boolean;
   readonly hasAdversarial: boolean;
   readonly latestAdversarialVerdict?: string;
@@ -67,7 +91,8 @@ export function evaluateGates(f: GateFacts): GateFailure[] {
   if (!f.hasReviews) {
     failures.push({ code: 'no-reviews', message: 'No independent review has been recorded' });
   } else {
-    if (!f.latestReviewReadable || !isPass(f.latestReviewVerdict)) {
+    const verdictIsPass = isPass(f.latestReviewVerdict);
+    if (!f.latestReviewReadable || !verdictIsPass) {
       failures.push({
         code: 'review-not-pass',
         message: f.latestReviewReadable
@@ -75,10 +100,47 @@ export function evaluateGates(f: GateFacts): GateFailure[] {
           : 'Latest review could not be read'
       });
     }
-    if (f.severeFindingCount > 0) {
+    // Prefer the cumulative ledger count when the ledger exists; otherwise fall
+    // back to the latest review file's raw severe count (controller.py ~2526).
+    const severeCount = f.hasCumulativeFindings
+      ? (f.cumulativeSevereFindingCount ?? 0)
+      : f.severeFindingCount;
+    if (severeCount > 0) {
+      const describe =
+        f.severeFindingsDescription && f.severeFindingsDescription.length > 0
+          ? `: ${f.severeFindingsDescription}`
+          : '';
       failures.push({
         code: 'severe-findings',
-        message: `Latest review has ${f.severeFindingCount} unresolved critical/high finding(s)`
+        message: f.hasCumulativeFindings
+          ? `${severeCount} unresolved critical/high finding(s) in review ledger${describe}`
+          : `Latest review has ${severeCount} unresolved critical/high finding(s)`
+      });
+    }
+    // Completion requires every acceptance criterion to be satisfied (fail
+    // closed): not_satisfied / partially_satisfied / not_verifiable (and any
+    // missing/unknown status) block (controller.py ~2538).
+    const blockingAcCount = f.blockingAcceptanceCriteriaCount ?? 0;
+    if (blockingAcCount > 0) {
+      const describe =
+        f.blockingAcceptanceCriteriaDescription &&
+        f.blockingAcceptanceCriteriaDescription.length > 0
+          ? `: ${f.blockingAcceptanceCriteriaDescription}`
+          : '';
+      failures.push({
+        code: 'acceptance-criteria-unsatisfied',
+        message: `${blockingAcCount} acceptance criteria not satisfied${describe}`
+      });
+    }
+    // Reject an internally-inconsistent review: a `pass` verdict cannot coexist
+    // with unresolved blocking findings or unsatisfied acceptance criteria
+    // (controller.py ~2548).
+    if (verdictIsPass && (severeCount > 0 || blockingAcCount > 0)) {
+      failures.push({
+        code: 'review-inconsistent-pass',
+        message:
+          `Latest review verdict is 'pass' but ${severeCount} blocking finding(s) ` +
+          `and ${blockingAcCount} unsatisfied acceptance criteria remain (inconsistent review)`
       });
     }
   }

@@ -70,7 +70,13 @@ describe('evaluateGates (cmd_evaluate parity, REFERENCE §6)', () => {
   });
 
   it('#7 fails on raw severe findings even when verdict is pass (no triage consulted)', () => {
-    assert.deepEqual(codes(passing({ severeFindingCount: 2 })), ['severe-findings']);
+    // A pass verdict + severe findings also trips the pass+blocking contradiction
+    // (controller.py ~2548: `if verdict == "pass" and (severe or blocking_ac)`),
+    // even on the review-file fallback path.
+    assert.deepEqual(codes(passing({ severeFindingCount: 2 })), [
+      'severe-findings',
+      'review-inconsistent-pass'
+    ]);
   });
 
   it('#6 and #7 can both fire for a non-pass review with severe findings', () => {
@@ -110,6 +116,97 @@ describe('evaluateGates (cmd_evaluate parity, REFERENCE §6)', () => {
     );
   });
 
+  it('#7 uses the cumulative ledger count when hasCumulativeFindings is set', () => {
+    const c = codes(
+      passing({
+        latestReviewVerdict: 'changes_required',
+        hasCumulativeFindings: true,
+        cumulativeSevereFindingCount: 3,
+        severeFindingCount: 0 // review-file count ignored when the ledger is present
+      })
+    );
+    assert.deepEqual(c, ['review-not-pass', 'severe-findings']);
+  });
+
+  it('#7 cumulative message names findings via the supplied description', () => {
+    const failures = evaluateGates(
+      passing({
+        latestReviewVerdict: 'changes_required',
+        hasCumulativeFindings: true,
+        cumulativeSevereFindingCount: 1,
+        severeFindingsDescription: 'F-1 [critical/security] boom'
+      })
+    );
+    const severe = failures.find((f) => f.code === 'severe-findings');
+    assert.equal(
+      severe?.message,
+      '1 unresolved critical/high finding(s) in review ledger: F-1 [critical/security] boom'
+    );
+  });
+
+  it('#8 acceptance-criteria-unsatisfied fires when a cumulative AC is not satisfied', () => {
+    const failures = evaluateGates(
+      passing({
+        blockingAcceptanceCriteriaCount: 2,
+        blockingAcceptanceCriteriaDescription: 'AC-1 [not_satisfied]; AC-2 [partially_satisfied]'
+      })
+    );
+    const ac = failures.find((f) => f.code === 'acceptance-criteria-unsatisfied');
+    assert.equal(
+      ac?.message,
+      '2 acceptance criteria not satisfied: AC-1 [not_satisfied]; AC-2 [partially_satisfied]'
+    );
+    // A pass verdict + blocking AC also trips the contradiction gate.
+    assert.ok(failures.some((f) => f.code === 'review-inconsistent-pass'));
+  });
+
+  it('#9 pass verdict + cumulative severe finding ⇒ severe-findings AND review-inconsistent-pass', () => {
+    const c = codes(
+      passing({
+        latestReviewVerdict: 'pass',
+        hasCumulativeFindings: true,
+        cumulativeSevereFindingCount: 1
+      })
+    );
+    assert.deepEqual(c, ['severe-findings', 'review-inconsistent-pass']);
+  });
+
+  it('#9 pass verdict + not_satisfied AC ⇒ acceptance-criteria-unsatisfied AND review-inconsistent-pass', () => {
+    const c = codes(passing({ latestReviewVerdict: 'pass', blockingAcceptanceCriteriaCount: 1 }));
+    assert.deepEqual(c, ['acceptance-criteria-unsatisfied', 'review-inconsistent-pass']);
+  });
+
+  it('#9 contradiction message reports both blocking counts', () => {
+    const failures = evaluateGates(
+      passing({
+        latestReviewVerdict: 'pass',
+        hasCumulativeFindings: true,
+        cumulativeSevereFindingCount: 2,
+        blockingAcceptanceCriteriaCount: 1
+      })
+    );
+    const contradiction = failures.find((f) => f.code === 'review-inconsistent-pass');
+    assert.equal(
+      contradiction?.message,
+      "Latest review verdict is 'pass' but 2 blocking finding(s) and 1 unsatisfied " +
+        'acceptance criteria remain (inconsistent review)'
+    );
+  });
+
+  it('clean cumulative ledger + satisfied AC + pass ⇒ gate passes', () => {
+    assert.deepEqual(
+      codes(
+        passing({
+          latestReviewVerdict: 'pass',
+          hasCumulativeFindings: true,
+          cumulativeSevereFindingCount: 0,
+          blockingAcceptanceCriteriaCount: 0
+        })
+      ),
+      []
+    );
+  });
+
   it('reports failures in the documented order', () => {
     const c = codes(
       passing({
@@ -130,6 +227,26 @@ describe('evaluateGates (cmd_evaluate parity, REFERENCE §6)', () => {
       'verification-failing',
       'review-not-pass',
       'severe-findings',
+      'adversarial-required'
+    ]);
+  });
+
+  it('reports the full ordered set including AC + contradiction (cumulative path)', () => {
+    // pass verdict so the contradiction gate is reachable after severe + AC.
+    const c = codes(
+      passing({
+        latestReviewVerdict: 'pass',
+        hasCumulativeFindings: true,
+        cumulativeSevereFindingCount: 1,
+        blockingAcceptanceCriteriaCount: 1,
+        requiresAdversarial: true,
+        hasAdversarial: false
+      })
+    );
+    assert.deepEqual(c, [
+      'severe-findings',
+      'acceptance-criteria-unsatisfied',
+      'review-inconsistent-pass',
       'adversarial-required'
     ]);
   });

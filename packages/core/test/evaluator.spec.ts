@@ -72,11 +72,13 @@ describe('evaluateWorkflow (integration)', () => {
       latestReview: { readable: true, verdict: 'pass', severeFindingCount: 2 }
     });
     assert.equal(model.gatesPass, false);
+    // A pass verdict + severe findings also trips the pass+blocking
+    // contradiction (controller.py ~2548), even on the review-file fallback path.
     assert.deepEqual(
       model.completionGateFailures.map((f) => f.code),
-      ['severe-findings']
+      ['severe-findings', 'review-inconsistent-pass']
     );
-    // stop_gate keys on verdict only ⇒ step 8.
+    // next-action keys on verdict only (no cumulative ledger) ⇒ step 8.
     assert.equal(model.recommendedNextAction.code, 'evaluate-report');
   });
 
@@ -126,9 +128,159 @@ describe('evaluateWorkflow (integration)', () => {
   });
 });
 
+describe('evaluateWorkflow cumulative ledger wiring (run-state v0.3.0)', () => {
+  function ledgerState(overrides: Record<string, unknown> = {}): RunState {
+    return build({
+      verification: { checks: [{ name: 'unit', command: ['t'], exit_code: 0 }] },
+      reviews: [{ round: 2, path: 'review-02.codex.json', verdict: 'pass', delta: true }],
+      ...overrides
+    });
+  }
+
+  it('a pass review with an open critical cumulative finding fails the gate AND routes to triage', () => {
+    const state = ledgerState({
+      cumulative_findings: [
+        {
+          id: 'F-1',
+          severity: 'critical',
+          category: 'security',
+          status: 'open',
+          description: 'unauthenticated webhook'
+        }
+      ]
+    });
+    const model = evaluate(state, {
+      acceptedSpecExists: true,
+      acceptedPlanExists: true,
+      latestReview: { readable: true, verdict: 'pass', severeFindingCount: 0 }
+    });
+    const gateCodes = model.completionGateFailures.map((f) => f.code);
+    assert.ok(gateCodes.includes('severe-findings'));
+    assert.ok(gateCodes.includes('review-inconsistent-pass'));
+    // cumulativeUnresolvedSevere overrides the pass verdict for next-action.
+    assert.equal(model.recommendedNextAction.code, 'triage-findings');
+    assert.equal(model.cumulativeFindings.blockingSevereCount, 1);
+    assert.equal(model.cumulativeFindings.openCount, 1);
+    assert.equal(model.cumulativeFindings.resolvedCount, 0);
+    assert.ok(
+      model.cumulativeFindings.blockingSevereDescription.startsWith('F-1 [critical/security]')
+    );
+  });
+
+  it('a resolved cumulative finding does not block; provenance is surfaced', () => {
+    const state = ledgerState({
+      cumulative_findings: [
+        {
+          id: 'F-1',
+          severity: 'critical',
+          status: 'resolved',
+          resolved_at_round: 2,
+          resolution_source: 'review-02'
+        }
+      ],
+      cumulative_acceptance_criteria: [{ id: 'AC-1', status: 'satisfied' }]
+    });
+    const model = evaluate(state, {
+      acceptedSpecExists: true,
+      acceptedPlanExists: true,
+      latestReview: { readable: true, verdict: 'pass', severeFindingCount: 0 }
+    });
+    assert.equal(model.gatesPass, true);
+    assert.deepEqual(model.completionGateFailures, []);
+    assert.equal(model.recommendedNextAction.code, 'evaluate-report');
+    assert.equal(model.cumulativeFindings.resolvedCount, 1);
+    assert.equal(model.cumulativeFindings.resolved[0]?.resolutionSource, 'review-02');
+    assert.equal(model.acceptanceCriteria.satisfiedCount, 1);
+    assert.equal(model.acceptanceCriteria.blockingCount, 0);
+  });
+
+  it('a not_satisfied cumulative AC fails the gate with the AC code', () => {
+    const state = ledgerState({
+      cumulative_acceptance_criteria: [
+        { id: 'AC-1', status: 'satisfied' },
+        { id: 'AC-2', status: 'not_satisfied' }
+      ]
+    });
+    const model = evaluate(state, {
+      acceptedSpecExists: true,
+      acceptedPlanExists: true,
+      latestReview: { readable: true, verdict: 'pass', severeFindingCount: 0 }
+    });
+    const gateCodes = model.completionGateFailures.map((f) => f.code);
+    assert.ok(gateCodes.includes('acceptance-criteria-unsatisfied'));
+    assert.ok(gateCodes.includes('review-inconsistent-pass'));
+    assert.equal(model.acceptanceCriteria.blockingCount, 1);
+    assert.ok(model.acceptanceCriteria.blockingDescription.includes('AC-2 [not_satisfied]'));
+  });
+
+  it('surfaces the latest checkpoint (changed-path count, context mode, delta) and codex usage totals', () => {
+    const state = ledgerState({
+      effective_mode: 'rigorous',
+      reviews: [
+        {
+          round: 2,
+          path: 'review-02.codex.json',
+          verdict: 'pass',
+          delta: true,
+          checkpoint: {
+            id: 'review-02',
+            changed_paths: ['src/a.ts', 'src/b.ts', 'src/c.ts'],
+            path_fingerprints: {},
+            review_context_mode: 'focused_full_fallback'
+          }
+        }
+      ],
+      codex_runs: [
+        {
+          phase: 'review',
+          prompt_characters: 1000,
+          output_characters: 2000,
+          duration_seconds: 5,
+          tokens: { input_tokens: 10, output_tokens: 20, total_tokens: 30 }
+        },
+        {
+          phase: 'plan',
+          prompt_characters: 500,
+          output_characters: 700,
+          duration_seconds: 2.5,
+          tokens: { input_tokens: 5, output_tokens: 7, total_tokens: 12 }
+        }
+      ]
+    });
+    const model = evaluate(state, {
+      acceptedSpecExists: true,
+      acceptedPlanExists: true,
+      latestReview: passingReview
+    });
+    assert.equal(model.checkpoint?.id, 'review-02');
+    assert.equal(model.checkpoint?.changedPathsCount, 3);
+    assert.equal(model.checkpoint?.reviewContextMode, 'focused_full_fallback');
+    assert.equal(model.checkpoint?.isDelta, true);
+    assert.equal(model.effectiveMode, 'rigorous');
+    assert.equal(model.codexUsage.totalPromptCharacters, 1500);
+    assert.equal(model.codexUsage.totalOutputCharacters, 2700);
+    assert.equal(model.codexUsage.totalDurationSeconds, 7.5);
+    assert.equal(model.codexUsage.totalTokens, 42);
+    assert.equal(model.codexUsage.runs.length, 2);
+  });
+
+  it('a malformed (non-object) cumulative finding blocks the gate (fail closed)', () => {
+    const state = ledgerState({ cumulative_findings: ['corrupt-entry'] });
+    const model = evaluate(state, {
+      acceptedSpecExists: true,
+      acceptedPlanExists: true,
+      latestReview: { readable: true, verdict: 'pass', severeFindingCount: 0 }
+    });
+    assert.ok(model.completionGateFailures.some((f) => f.code === 'severe-findings'));
+    assert.equal(model.cumulativeFindings.blockingSevereCount, 1);
+  });
+});
+
 describe('evaluateWorkflow stage timeline', () => {
-  it('marks a freshly-initialized run active at idea-enhanced when enhance is absent', () => {
-    const model = evaluate(build({ artifacts: {} }));
+  it('marks a freshly-initialized run active at idea-enhanced when enhance is absent (rigorous)', () => {
+    // Mode-aware next action only routes to enhance in rigorous mode
+    // (controller.py ~3125); otherwise an un-enhanced run reconciles the spec.
+    const model = evaluate(build({ artifacts: {}, effective_mode: 'rigorous' }));
     const byId = Object.fromEntries(model.stages.map((s) => [s.id, s.status]));
     assert.equal(byId['initialized'], 'complete');
     assert.equal(byId['idea-enhanced'], 'active');

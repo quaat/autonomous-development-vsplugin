@@ -9,6 +9,7 @@
 import type {
   DashboardArtifact,
   DashboardCheck,
+  DashboardCumulativeFinding,
   DashboardReviewRound,
   DashboardStage,
   DashboardView,
@@ -117,35 +118,170 @@ function renderStatus(view: DashboardView): HTMLElement {
       )
     : el('p', { class: 'ok' }, ['All completion gates pass.']);
 
+  const statusCells: Child[] = [
+    kv('Phase', view.phase || '—'),
+    kv('Status', view.status),
+    kv(
+      'Review budget',
+      `${view.reviewBudget.consumed}/${view.reviewBudget.max} used (${view.reviewBudget.remaining} left)`
+    ),
+    kv(
+      'Verification',
+      view.verification.hasChecks
+        ? `${view.verification.passedCount}/${view.verification.total} passing`
+        : 'no checks'
+    ),
+    kv('Latest review', view.review.latestVerdict ?? 'none'),
+    kv(
+      'Risk',
+      view.risk.requiresAdversarialReview
+        ? `adversarial required (${view.risk.reasons.join(', ') || 'unspecified'})`
+        : 'standard'
+    )
+  ];
+  if (view.effectiveMode) {
+    statusCells.push(kv('Workflow mode', view.effectiveMode));
+  }
+  if (view.checkpoint) {
+    const fallback = view.checkpoint.reviewContextMode === 'focused_full_fallback';
+    statusCells.push(
+      kv(
+        'Review delta',
+        view.checkpoint.isDelta
+          ? `${view.checkpoint.changedPathsCount} changed path(s)${fallback ? ' (full-context fallback)' : ''}`
+          : 'full review (round 1)'
+      )
+    );
+  }
+
   return section(
     'Current status',
-    el('div', { class: 'status-grid' }, [
-      kv('Phase', view.phase || '—'),
-      kv('Status', view.status),
-      kv(
-        'Review budget',
-        `${view.reviewBudget.consumed}/${view.reviewBudget.max} used (${view.reviewBudget.remaining} left)`
-      ),
-      kv(
-        'Verification',
-        view.verification.hasChecks
-          ? `${view.verification.passedCount}/${view.verification.total} passing`
-          : 'no checks'
-      ),
-      kv('Latest review', view.review.latestVerdict ?? 'none'),
-      kv(
-        'Risk',
-        view.risk.requiresAdversarialReview
-          ? `adversarial required (${view.risk.reasons.join(', ') || 'unspecified'})`
-          : 'standard'
-      )
-    ]),
+    el('div', { class: 'status-grid' }, statusCells),
     el('h3', {}, ['Completion gates']),
     gateList,
     el('div', { class: 'next-action' }, [
       el('strong', {}, ['Recommended next action: ']),
       view.nextAction.message || '—'
     ])
+  );
+}
+
+function renderCumulativeFinding(f: DashboardCumulativeFinding): HTMLElement {
+  const head = el('div', { class: 'finding-head' }, [
+    el('span', { class: `sev sev-${(f.severity ?? 'unknown').toLowerCase()}` }, [
+      f.severity ?? 'unknown'
+    ]),
+    f.category ? el('span', { class: 'cat' }, [f.category]) : null,
+    f.id ? el('span', { class: 'fid' }, [f.id]) : null,
+    f.blocking
+      ? el('span', { class: 'badge warn' }, ['blocking'])
+      : el('span', { class: 'badge ok' }, [f.status ?? 'released']),
+    f.file
+      ? button(
+          `${f.file}${f.line ? `:${f.line}` : ''}`,
+          () =>
+            vscode.postMessage({
+              type: 'openFinding',
+              file: f.file as string,
+              line: f.line ?? null
+            }),
+          { class: 'link' }
+        )
+      : null
+  ]);
+  const provenance: string[] = [];
+  if (f.roundOpened !== undefined) provenance.push(`opened r${f.roundOpened}`);
+  if (f.roundLastSeen !== undefined) provenance.push(`last seen r${f.roundLastSeen}`);
+  if (f.origin) provenance.push(f.origin);
+  if (f.resolvedAtRound !== undefined) provenance.push(`resolved r${f.resolvedAtRound}`);
+  if (f.resolutionSource) provenance.push(`via ${f.resolutionSource}`);
+  const body: Child[] = [];
+  if (f.description) body.push(el('p', { class: 'finding-desc' }, [f.description]));
+  if (provenance.length)
+    body.push(el('p', { class: 'finding-prov muted' }, [provenance.join(' · ')]));
+  return el('div', { class: `finding ${f.blocking ? 'blocking' : 'released'}` }, [head, ...body]);
+}
+
+function renderCumulativeFindings(view: DashboardView): HTMLElement | null {
+  const cf = view.cumulativeFindings;
+  if (cf.total === 0) {
+    return null;
+  }
+  const summary = el('div', { class: 'ledger-summary' }, [
+    kv('Total', String(cf.total)),
+    kv('Blocking (critical/high)', String(cf.blockingSevereCount)),
+    kv('Open', String(cf.openCount)),
+    kv('Resolved', String(cf.resolvedCount))
+  ]);
+  return section(
+    'Cumulative findings ledger',
+    summary,
+    el('div', { class: 'findings' }, cf.findings.map(renderCumulativeFinding))
+  );
+}
+
+function renderAcceptanceCriteria(view: DashboardView): HTMLElement | null {
+  const ac = view.acceptanceCriteria;
+  if (ac.total === 0) {
+    return null;
+  }
+  const rows = ac.criteria.map((c) =>
+    el('tr', { class: c.blocking ? 'ac-blocking' : 'ac-satisfied' }, [
+      el('td', {}, [c.id ?? '—']),
+      el('td', {}, [
+        el('span', { class: `ac-status ac-${(c.status ?? 'unknown').toLowerCase()}` }, [
+          c.status ?? 'unknown'
+        ])
+      ]),
+      el('td', {}, [c.blocking ? 'blocking' : 'satisfied']),
+      el('td', {}, [c.evidence ?? ''])
+    ])
+  );
+  const head = el(
+    'tr',
+    {},
+    ['Criterion', 'Status', 'Gate', 'Evidence'].map((h) => el('th', {}, [h]))
+  );
+  return section(
+    'Acceptance criteria',
+    el('p', { class: ac.blockingCount > 0 ? 'warn' : 'ok' }, [
+      `${ac.satisfiedCount}/${ac.total} satisfied` +
+        (ac.blockingCount > 0 ? ` — ${ac.blockingCount} blocking completion` : '')
+    ]),
+    el('table', { class: 'checks' }, [el('thead', {}, [head]), el('tbody', {}, rows)])
+  );
+}
+
+function renderCodexUsage(view: DashboardView): HTMLElement | null {
+  const usage = view.codexUsage;
+  if (usage.runs.length === 0) {
+    return null;
+  }
+  const rows = usage.runs.map((r) =>
+    el('tr', {}, [
+      el('td', {}, [r.phase ?? '—']),
+      el('td', {}, [r.model ?? '']),
+      el('td', {}, [r.durationSeconds !== undefined ? `${r.durationSeconds.toFixed(1)}s` : '']),
+      el('td', {}, [r.totalTokens !== undefined ? String(r.totalTokens) : '']),
+      el('td', {}, [r.promptCharacters !== undefined ? String(r.promptCharacters) : '']),
+      el('td', {}, [r.outputCharacters !== undefined ? String(r.outputCharacters) : ''])
+    ])
+  );
+  const head = el(
+    'tr',
+    {},
+    ['Phase', 'Model', 'Duration', 'Tokens', 'Prompt chars', 'Output chars'].map((h) =>
+      el('th', {}, [h])
+    )
+  );
+  const totals = el('p', { class: 'muted' }, [
+    `Total: ${usage.totalDurationSeconds.toFixed(1)}s` +
+      (usage.totalTokens > 0 ? `, ${usage.totalTokens} tokens` : '')
+  ]);
+  return section(
+    'Codex usage',
+    el('table', { class: 'checks' }, [el('thead', {}, [head]), el('tbody', {}, rows)]),
+    totals
   );
 }
 
@@ -412,6 +548,8 @@ function render(view: DashboardView): void {
     renderHeader(view),
     renderStages(view.stages),
     renderStatus(view),
+    renderCumulativeFindings(view),
+    renderAcceptanceCriteria(view),
     renderArtifacts(view),
     renderVerification(view),
     renderReviewRounds('Independent review', view.review.rounds),
@@ -419,6 +557,7 @@ function render(view: DashboardView): void {
     view.adversarial.required
       ? renderReviewRounds('Adversarial review', view.adversarial.rounds)
       : null,
+    renderCodexUsage(view),
     renderTimeline(view),
     renderDiagnostics(view)
   ];

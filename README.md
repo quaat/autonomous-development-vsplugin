@@ -10,7 +10,7 @@ native diff editor, surfaces verification and review results, and exposes safe
 controller actions — without requiring you to navigate the external state
 directory by hand. It works even when a run was started entirely outside VS Code.
 
-This first release is **observer-first**. It does not orchestrate Claude or Codex
+The extension is **observer-first**. It does not orchestrate Claude or Codex
 directly; it reads the state the existing workflow already writes and adds a
 typed, append-only event protocol (`events.jsonl`) that later live integrations
 can emit. See [ROADMAP.md](ROADMAP.md).

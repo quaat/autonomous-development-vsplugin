@@ -109,8 +109,11 @@ describe('recommendNextAction defensive front-extensions (REFERENCE §7)', () =>
     assert.equal(code(ready({ status: 'blocked' })), 'blocked');
   });
 
-  it('no enhance artifact ⇒ run-enhance (precedes reconcile-spec)', () => {
-    assert.equal(code(ready({ hasEnhance: false, acceptedSpecExists: false })), 'run-enhance');
+  it('rigorous mode + no enhance artifact ⇒ run-enhance (precedes reconcile-spec)', () => {
+    assert.equal(
+      code(ready({ effectiveMode: 'rigorous', hasEnhance: false, acceptedSpecExists: false })),
+      'run-enhance'
+    );
   });
 
   it('terminal precedence beats unmet steps', () => {
@@ -118,6 +121,54 @@ describe('recommendNextAction defensive front-extensions (REFERENCE §7)', () =>
     assert.equal(
       code(ready({ status: 'cancelled', acceptedSpecExists: false, acceptedPlanExists: false })),
       'none'
+    );
+  });
+});
+
+describe('recommendNextAction mode awareness (controller.py compute_next_action)', () => {
+  it('rigorous mode + no spec + no enhance ⇒ run-enhance', () => {
+    assert.equal(
+      code(ready({ effectiveMode: 'rigorous', acceptedSpecExists: false, hasEnhance: false })),
+      'run-enhance'
+    );
+  });
+
+  it('rigorous mode + no spec but enhance already present ⇒ reconcile-spec', () => {
+    assert.equal(
+      code(ready({ effectiveMode: 'rigorous', acceptedSpecExists: false, hasEnhance: true })),
+      'reconcile-spec'
+    );
+  });
+
+  it('standard mode + no spec ⇒ reconcile-spec (NOT enhance), even without an enhance artifact', () => {
+    assert.equal(
+      code(ready({ effectiveMode: 'standard', acceptedSpecExists: false, hasEnhance: false })),
+      'reconcile-spec'
+    );
+  });
+
+  it('lean mode + no spec ⇒ reconcile-spec', () => {
+    assert.equal(
+      code(ready({ effectiveMode: 'lean', acceptedSpecExists: false, hasEnhance: false })),
+      'reconcile-spec'
+    );
+  });
+
+  it('absent mode + no spec ⇒ reconcile-spec (default is not rigorous)', () => {
+    assert.equal(code(ready({ acceptedSpecExists: false, hasEnhance: false })), 'reconcile-spec');
+  });
+
+  it('step 5: pass review but cumulativeUnresolvedSevere ⇒ triage-findings', () => {
+    assert.equal(
+      code(ready({ effectiveReviewVerdict: 'pass', cumulativeUnresolvedSevere: true })),
+      'triage-findings'
+    );
+  });
+
+  it('step 5: pass review + no cumulative severe ⇒ proceeds past review', () => {
+    assert.equal(
+      code(ready({ effectiveReviewVerdict: 'pass', cumulativeUnresolvedSevere: false })),
+      'evaluate-report'
     );
   });
 });

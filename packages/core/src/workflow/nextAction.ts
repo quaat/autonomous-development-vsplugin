@@ -2,10 +2,16 @@
  * Recommended next action — the single derivation consumed by tree, dashboard,
  * status bar, and commands (docs/REFERENCE.md §7).
  *
- * Steps 1–8 mirror `stop_gate.py:reason_for` exactly (first match wins). The
- * front of the list is extended defensively for terminal/early states that
- * stop_gate never sees but that the extension must still render; these never
- * contradict stop_gate.
+ * Mirrors `controller.py:compute_next_action` (mode-aware, ~lines 3103-3202),
+ * first match wins. The front of the list is extended defensively for
+ * terminal/early states that stop_gate never sees but that the extension must
+ * still render; these never contradict the controller.
+ *
+ * Mode awareness: when no accepted spec exists, the controller only routes to
+ * `enhance` when `effective_mode == "rigorous"` AND no enhance artifact exists;
+ * every other mode goes straight to the specification step. Step 5 additionally
+ * routes to review when the cumulative ledger still has unresolved severe
+ * findings, even if the latest verdict is `pass`.
  */
 
 import type { RunStatus } from '../types';
@@ -55,8 +61,20 @@ export interface NextActionFacts {
   readonly hasChecks: boolean;
   readonly verificationPassed: boolean;
   readonly hasReviews: boolean;
-  /** Verdict used for step 6: file verdict when readable, else run-state cache. */
+  /** Verdict used for step 5: file verdict when readable, else run-state cache. */
   readonly effectiveReviewVerdict?: string;
+  /**
+   * Effective workflow mode (auto | lean | standard | rigorous). Only `rigorous`
+   * routes a missing spec to the `enhance` step; everything else (and an absent
+   * mode) goes straight to the specification step (controller.py ~3106, ~3125).
+   */
+  readonly effectiveMode?: string;
+  /**
+   * Whether the cumulative ledger still has unresolved severe (critical/high)
+   * findings. Routes to review even when the latest verdict is `pass`
+   * (controller.py ~3176).
+   */
+  readonly cumulativeUnresolvedSevere?: boolean;
   readonly requiresAdversarial: boolean;
   readonly hasAdversarial: boolean;
   readonly latestAdversarialVerdict?: string;
@@ -67,19 +85,21 @@ function isPass(verdict: string | undefined): boolean {
 }
 
 export function recommendNextAction(f: NextActionFacts): NextAction {
-  // Defensive front extensions (no stop_gate equivalent; never contradict it).
+  // Defensive front extensions (no controller equivalent; never contradict it).
   if (f.status === 'cancelled' || f.status === 'archived' || f.status === 'complete') {
     return nextAction('none');
   }
   if (f.status === 'blocked') {
     return nextAction('blocked');
   }
-  if (!f.hasEnhance) {
-    return nextAction('run-enhance');
-  }
 
-  // stop_gate.py:reason_for — first match wins.
+  // controller.py:compute_next_action — first match wins.
   if (!f.acceptedSpecExists) {
+    // Only rigorous mode (with no enhance artifact yet) routes to enhance;
+    // every other mode reconciles the spec directly.
+    if (f.effectiveMode === 'rigorous' && !f.hasEnhance) {
+      return nextAction('run-enhance');
+    }
     return nextAction('reconcile-spec');
   }
   if (!f.acceptedPlanExists) {
@@ -94,7 +114,7 @@ export function recommendNextAction(f: NextActionFacts): NextAction {
   if (!f.hasReviews) {
     return nextAction('run-review');
   }
-  if (!isPass(f.effectiveReviewVerdict)) {
+  if (!isPass(f.effectiveReviewVerdict) || f.cumulativeUnresolvedSevere === true) {
     return nextAction('triage-findings');
   }
   if (f.requiresAdversarial && (!f.hasAdversarial || !isPass(f.latestAdversarialVerdict))) {

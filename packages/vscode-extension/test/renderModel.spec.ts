@@ -144,4 +144,72 @@ describe('toDashboardView', () => {
     assert.deepEqual(view.stages, []);
     assert.ok(view.diagnostics.some((d) => d.code === 'run-state-parse-error'));
   });
+
+  describe('cumulative ledger (v0.3.0 surface)', () => {
+    it('separates resolved from blocking cumulative findings with provenance', () => {
+      const view = viewFor('cumulativeLedger');
+      const cf = view.cumulativeFindings;
+      assert.equal(cf.total, 3);
+      // Only the open critical F-2 is severe + unresolved → blocking.
+      assert.equal(cf.blockingSevereCount, 1);
+      assert.equal(cf.resolvedCount, 1);
+      assert.equal(cf.openCount, 2); // F-2 (critical) + F-3 (low) are open.
+
+      const byId = new Map(cf.findings.map((f) => [f.id, f]));
+      const resolved = byId.get('F-1');
+      assert.ok(resolved, 'F-1 present');
+      assert.equal(resolved.blocking, false, 'resolved finding is NOT blocking');
+      assert.equal(resolved.resolvedAtRound, 2);
+      assert.equal(resolved.resolutionSource, 'review-02');
+
+      const critical = byId.get('F-2');
+      assert.ok(critical, 'F-2 present');
+      assert.equal(critical.blocking, true, 'open critical finding blocks');
+      assert.equal(critical.roundOpened, 2);
+
+      const low = byId.get('F-3');
+      assert.ok(low, 'F-3 present');
+      assert.equal(low.blocking, false, 'open low severity does not block');
+    });
+
+    it('flags every non-satisfied acceptance criterion as blocking (fail closed)', () => {
+      const view = viewFor('cumulativeLedger');
+      const ac = view.acceptanceCriteria;
+      assert.equal(ac.total, 3);
+      assert.equal(ac.satisfiedCount, 1);
+      assert.equal(ac.blockingCount, 2);
+      const byId = new Map(ac.criteria.map((c) => [c.id, c]));
+      assert.equal(byId.get('AC-1')?.blocking, false);
+      assert.equal(byId.get('AC-2')?.blocking, true);
+      assert.equal(byId.get('AC-3')?.blocking, true);
+    });
+
+    it('fails completion closed on open critical + unsatisfied criteria', () => {
+      const view = viewFor('cumulativeLedger');
+      assert.equal(view.gatesPass, false);
+      const codes = view.gateFailures.map((g) => g.code);
+      assert.ok(codes.includes('severe-findings'), 'severe-findings gate fires');
+      assert.ok(
+        codes.includes('acceptance-criteria-unsatisfied'),
+        'acceptance-criteria gate fires'
+      );
+    });
+
+    it('surfaces the effective mode, latest checkpoint, and Codex usage', () => {
+      const view = viewFor('cumulativeLedger');
+      assert.equal(view.effectiveMode, 'rigorous');
+
+      assert.ok(view.checkpoint, 'checkpoint present');
+      assert.equal(view.checkpoint.id, 'review-02');
+      assert.equal(view.checkpoint.isDelta, true);
+      assert.equal(view.checkpoint.reviewContextMode, 'focused_full_fallback');
+      assert.equal(view.checkpoint.changedPathsCount, 2);
+
+      assert.equal(view.codexUsage.runs.length, 2);
+      assert.equal(view.codexUsage.totalTokens, 2400);
+      assert.equal(view.codexUsage.totalDurationSeconds, 20.75);
+      const enhance = view.codexUsage.runs.find((r) => r.phase === 'enhance');
+      assert.equal(enhance?.totalTokens, 1300);
+    });
+  });
 });

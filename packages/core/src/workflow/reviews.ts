@@ -14,20 +14,16 @@ import {
 } from '../types';
 
 /**
- * The latest review reference: the entry with the highest `round`, breaking ties
- * (and missing rounds) by latest array position. Returns undefined for empty.
+ * The latest review reference. The controller authoritatively uses the array
+ * tail (`reviews[-1]`) for both the completion gate (`cmd_evaluate`) and
+ * next-action derivation (`compute_next_action`), appending each review in
+ * order — so the latest review is the last element written, *not* the
+ * highest-numbered round. Mirror that exactly: selecting by max `round` would
+ * diverge from the gate on a non-monotonic or corrupt round sequence. Returns
+ * undefined for an empty list.
  */
 export function latestReviewRef(reviews: readonly ReviewRef[]): ReviewRef | undefined {
-  let best: ReviewRef | undefined;
-  let bestRound = -Infinity;
-  for (const ref of reviews) {
-    const round = ref.round ?? -Infinity;
-    if (best === undefined || round >= bestRound) {
-      best = ref;
-      bestRound = round;
-    }
-  }
-  return best;
+  return reviews.length > 0 ? reviews[reviews.length - 1] : undefined;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

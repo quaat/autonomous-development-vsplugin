@@ -5,8 +5,22 @@
  * (see loadRun), which assembles the file-read facts this needs.
  */
 
-import { TERMINAL_STATUSES, type RunState, type RunStatus } from '../types';
+import {
+  TERMINAL_STATUSES,
+  type CodexRun,
+  type CumulativeAcceptanceCriterion,
+  type CumulativeFinding,
+  type RunState,
+  type RunStatus
+} from '../types';
 import { evaluateGates, gatesPass, type GateFailure } from './gates';
+import {
+  blockingAcceptanceCriteria,
+  cumulativeUnresolvedSevere,
+  describeBlockingAcceptanceCriteria,
+  describeBlockingFindings,
+  isFindingResolved
+} from './findings';
 import { latestReviewRef } from './reviews';
 import { deriveStages, type StageFacts, type WorkflowStage } from './stages';
 import { recommendNextAction, type NextAction } from './nextAction';
@@ -53,6 +67,52 @@ export interface AdversarialSummaryModel {
   readonly satisfied: boolean;
 }
 
+/** Cumulative finding-ledger summary (full-then-delta merged ledger). */
+export interface CumulativeFindingsModel {
+  readonly total: number;
+  /** Findings still blocking completion (unresolved + severe, fail closed). */
+  readonly blockingSevere: readonly CumulativeFinding[];
+  readonly blockingSevereCount: number;
+  /** `id [severity/category] snippet; ...` for the gate / UI. */
+  readonly blockingSevereDescription: string;
+  /** Findings released from blocking (resolved or non-blocking triage status). */
+  readonly resolved: readonly CumulativeFinding[];
+  readonly resolvedCount: number;
+  /** Open (non-resolved) findings, including non-severe ones. */
+  readonly openCount: number;
+}
+
+/** Cumulative acceptance-criteria summary. */
+export interface AcceptanceCriteriaModel {
+  readonly total: number;
+  readonly satisfiedCount: number;
+  /** Criteria with status != satisfied (fail closed on missing/unknown). */
+  readonly blocking: readonly CumulativeAcceptanceCriterion[];
+  readonly blockingCount: number;
+  /** `id [status]; ...` for the gate / UI. */
+  readonly blockingDescription: string;
+}
+
+/** Latest review checkpoint info (focused-full-fallback delta). */
+export interface CheckpointModel {
+  readonly id?: string;
+  readonly reviewContextMode?: string;
+  readonly changedPathsCount: number;
+  /** Whether the latest review record was a delta (round 2+) review. */
+  readonly isDelta: boolean;
+}
+
+/** Per-phase Codex usage plus totals across all recorded phases. */
+export interface CodexUsageModel {
+  readonly runs: readonly CodexRun[];
+  readonly totalPromptCharacters: number;
+  readonly totalOutputCharacters: number;
+  readonly totalDurationSeconds: number;
+  readonly totalInputTokens: number;
+  readonly totalOutputTokens: number;
+  readonly totalTokens: number;
+}
+
 export interface WorkflowModel {
   readonly runId: string;
   readonly status: RunStatus;
@@ -72,6 +132,16 @@ export interface WorkflowModel {
   readonly gatesPass: boolean;
   readonly recommendedNextAction: NextAction;
   readonly blockingReason?: string;
+  /** Cumulative finding ledger (blocking/resolved counts + provenance). */
+  readonly cumulativeFindings: CumulativeFindingsModel;
+  /** Cumulative acceptance-criteria ledger (with blocking flags). */
+  readonly acceptanceCriteria: AcceptanceCriteriaModel;
+  /** Latest review checkpoint (changed-path count, context mode, delta flag). */
+  readonly checkpoint?: CheckpointModel;
+  /** Per-phase Codex usage summary plus totals. */
+  readonly codexUsage: CodexUsageModel;
+  /** Effective workflow mode (auto | lean | standard | rigorous), when recorded. */
+  readonly effectiveMode?: string;
 }
 
 function isPass(verdict: string | undefined): boolean {
@@ -86,6 +156,78 @@ function blockingReasonFor(state: RunState): string | undefined {
     return 'Review-round budget exhausted';
   }
   return state.phase && state.phase !== 'blocked' ? state.phase : 'Run is blocked';
+}
+
+function buildCumulativeFindingsModel(state: RunState): CumulativeFindingsModel {
+  const blockingSevere = cumulativeUnresolvedSevere(state);
+  const resolved = state.cumulativeFindings.filter((f) => isFindingResolved(f));
+  return {
+    total: state.cumulativeFindings.length,
+    blockingSevere,
+    blockingSevereCount: blockingSevere.length,
+    blockingSevereDescription: describeBlockingFindings(blockingSevere),
+    resolved,
+    resolvedCount: resolved.length,
+    openCount: state.cumulativeFindings.length - resolved.length
+  };
+}
+
+function buildAcceptanceCriteriaModel(state: RunState): AcceptanceCriteriaModel {
+  const blocking = blockingAcceptanceCriteria(state);
+  const total = state.cumulativeAcceptanceCriteria.length;
+  return {
+    total,
+    satisfiedCount: total - blocking.length,
+    blocking,
+    blockingCount: blocking.length,
+    blockingDescription: describeBlockingAcceptanceCriteria(blocking)
+  };
+}
+
+function buildCheckpointModel(state: RunState): CheckpointModel | undefined {
+  // Latest review record that carries a checkpoint (controller writes one per
+  // review round; scan from the end for the most recent).
+  for (let i = state.reviews.length - 1; i >= 0; i--) {
+    const review = state.reviews[i];
+    const checkpoint = review?.checkpoint;
+    if (checkpoint) {
+      return {
+        ...(checkpoint.id !== undefined ? { id: checkpoint.id } : {}),
+        ...(checkpoint.reviewContextMode !== undefined
+          ? { reviewContextMode: checkpoint.reviewContextMode }
+          : {}),
+        changedPathsCount: checkpoint.changedPaths.length,
+        isDelta: review?.delta === true
+      };
+    }
+  }
+  return undefined;
+}
+
+function buildCodexUsageModel(state: RunState): CodexUsageModel {
+  let totalPromptCharacters = 0;
+  let totalOutputCharacters = 0;
+  let totalDurationSeconds = 0;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let totalTokens = 0;
+  for (const run of state.codexRuns) {
+    totalPromptCharacters += run.promptCharacters ?? 0;
+    totalOutputCharacters += run.outputCharacters ?? 0;
+    totalDurationSeconds += run.durationSeconds ?? 0;
+    totalInputTokens += run.tokens?.inputTokens ?? 0;
+    totalOutputTokens += run.tokens?.outputTokens ?? 0;
+    totalTokens += run.tokens?.totalTokens ?? 0;
+  }
+  return {
+    runs: state.codexRuns,
+    totalPromptCharacters,
+    totalOutputCharacters,
+    totalDurationSeconds,
+    totalInputTokens,
+    totalOutputTokens,
+    totalTokens
+  };
 }
 
 export function evaluateWorkflow(input: EvaluatorInput): WorkflowModel {
@@ -106,6 +248,13 @@ export function evaluateWorkflow(input: EvaluatorInput): WorkflowModel {
   const latestAdversarialVerdict = adversarialLatest?.verdict;
   const requiresAdversarial = state.risk.requiresAdversarialReview;
 
+  // Cumulative ledgers (fail closed). The gate prefers the cumulative finding
+  // count when the ledger is non-empty, matching controller.py ~2526.
+  const cumulativeFindingsModel = buildCumulativeFindingsModel(state);
+  const acceptanceCriteriaModel = buildAcceptanceCriteriaModel(state);
+  const hasCumulativeFindings = state.cumulativeFindings.length > 0;
+  const cumulativeSevere = hasCumulativeFindings && cumulativeFindingsModel.blockingSevereCount > 0;
+
   const completionGateFailures = evaluateGates({
     acceptedSpecExists: input.acceptedSpecExists,
     acceptedPlanExists: input.acceptedPlanExists,
@@ -117,6 +266,15 @@ export function evaluateWorkflow(input: EvaluatorInput): WorkflowModel {
       ? { latestReviewVerdict: input.latestReview.verdict }
       : {}),
     severeFindingCount,
+    hasCumulativeFindings,
+    cumulativeSevereFindingCount: cumulativeFindingsModel.blockingSevereCount,
+    ...(cumulativeFindingsModel.blockingSevereDescription.length > 0
+      ? { severeFindingsDescription: cumulativeFindingsModel.blockingSevereDescription }
+      : {}),
+    blockingAcceptanceCriteriaCount: acceptanceCriteriaModel.blockingCount,
+    ...(acceptanceCriteriaModel.blockingDescription.length > 0
+      ? { blockingAcceptanceCriteriaDescription: acceptanceCriteriaModel.blockingDescription }
+      : {}),
     requiresAdversarial,
     hasAdversarial,
     ...(latestAdversarialVerdict !== undefined ? { latestAdversarialVerdict } : {})
@@ -131,6 +289,8 @@ export function evaluateWorkflow(input: EvaluatorInput): WorkflowModel {
     verificationPassed: verification.passed,
     hasReviews,
     ...(effectiveReviewVerdict !== undefined ? { effectiveReviewVerdict } : {}),
+    ...(state.effectiveMode !== undefined ? { effectiveMode: state.effectiveMode } : {}),
+    cumulativeUnresolvedSevere: cumulativeSevere,
     requiresAdversarial,
     hasAdversarial,
     ...(latestAdversarialVerdict !== undefined ? { latestAdversarialVerdict } : {})
@@ -179,6 +339,8 @@ export function evaluateWorkflow(input: EvaluatorInput): WorkflowModel {
   };
 
   const blockingReason = blockingReasonFor(state);
+  const checkpoint = buildCheckpointModel(state);
+  const codexUsage = buildCodexUsageModel(state);
 
   return {
     runId: state.runId,
@@ -198,6 +360,11 @@ export function evaluateWorkflow(input: EvaluatorInput): WorkflowModel {
     completionGateFailures,
     gatesPass: gatesPass(completionGateFailures),
     recommendedNextAction,
-    ...(blockingReason !== undefined ? { blockingReason } : {})
+    ...(blockingReason !== undefined ? { blockingReason } : {}),
+    cumulativeFindings: cumulativeFindingsModel,
+    acceptanceCriteria: acceptanceCriteriaModel,
+    ...(checkpoint !== undefined ? { checkpoint } : {}),
+    codexUsage,
+    ...(state.effectiveMode !== undefined ? { effectiveMode: state.effectiveMode } : {})
   };
 }

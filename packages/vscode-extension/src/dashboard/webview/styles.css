@@ -327,7 +327,7 @@ table.checks td {
   color: #fff;
 }
 .verdict-fail,
-.verdict-changes_requested {
+.verdict-changes_required {
   background: var(--vscode-testing-iconFailed, #d13438);
   color: #fff;
 }
@@ -502,4 +502,27 @@ details.gaps > summary {
   .event {
     grid-template-columns: 1fr;
   }
+}
+
+.warn {
+  color: var(--vscode-editorWarning-foreground, #d7a000);
+}
+.ledger-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+.finding.blocking {
+  border-left: 3px solid var(--vscode-testing-iconFailed, #d13438);
+}
+.finding.released {
+  opacity: 0.8;
+  border-left: 3px solid var(--vscode-testing-iconPassed, #2ea043);
+}
+.finding-prov {
+  font-size: 0.85em;
+}
+tr.ac-blocking td {
+  color: var(--vscode-editorWarning-foreground, #d7a000);
 }

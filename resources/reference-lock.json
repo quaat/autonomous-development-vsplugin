@@ -1,0 +1,23 @@
+{
+  "$comment": "Records the exact quaat/autonomous-development revision this extension's compatibility contract was derived from. Regenerate with `npm run verify:reference -- --update` after deliberately re-mirroring upstream schemas, and reconcile docs/REFERENCE.md in the same change. The `schemas` map covers files mirrored verbatim from upstream `schemas/`; `run-event.schema.json` is this project's own protocol schema and is intentionally excluded.",
+  "reference": "quaat/autonomous-development",
+  "version": "0.3.0",
+  "revision": "a72f740e281d40a6e372ee385fb4c5302ab7d0d7",
+  "shortRevision": "a72f740",
+  "stateSchemaVersion": 2,
+  "supportedStateSchemaVersions": [1, 2],
+  "notes": [
+    "Run-state is at schema_version 2; there is no schema v3 upstream.",
+    "validate_state does not validate run-state.json against a bundled schema (run-state schema validation is deferred upstream), so no run-state.schema.json is mirrored.",
+    "If a future upstream release freezes a run-state schema and bumps the version, treat that as a new dependency: mirror it, extend the parser, and update this lock plus docs/REFERENCE.md."
+  ],
+  "schemas": {
+    "accept-decisions.schema.json": "bd662679dd302d77ae2765db3415f8d7481e8fe27c435237a0d0de3be6bfdfc7",
+    "adversarial-review.schema.json": "baf7530ef2a7bad448685a27cd6fe47fd82e726f6b58df981c9074b0d0789206",
+    "enhanced-idea.schema.json": "258957b4a7aae360433ed76806ee74e46f95f85e1170bd4854a5d26373189754",
+    "implementation-plan.schema.json": "1e04b95ebe6022737eb44dfc689b550bb3e3b6d78c8b98eeaedaf609d586909b",
+    "review-delta.schema.json": "7026ed35dba033a09a0d64b3a42e46f740d32f5a9711129337194b628eaba7d6",
+    "review.schema.json": "79f5345568e5368e8720dc8f9460156e4d2f2a80a92c2f74f3ff2168dc619606",
+    "triage.schema.json": "579153f24197a040a1337989dc81e4a826f641168964b8d0fadfa2296e974c0f"
+  }
+}

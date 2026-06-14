@@ -11,7 +11,13 @@ import { redactCredentials } from './redact';
 import type {
   ArtifactMap,
   BaselineInfo,
+  CodexRun,
+  CodexRunTokens,
+  CumulativeAcceptanceCriterion,
+  CumulativeFinding,
   RepositoryInfo,
+  ReviewCheckpoint,
+  ReviewLedgerEntry,
   ReviewRef,
   RiskInfo,
   RunState,
@@ -50,12 +56,39 @@ function asStringArray(value: unknown): string[] {
   return value.filter((v): v is string => typeof v === 'string');
 }
 
-/** Normalize a status string to the {@link RunStatus} union. */
+/** A finite integer, or undefined. Truncates fractional numbers. */
+function asInt(value: unknown): number | undefined {
+  const n = asNumber(value);
+  return n === undefined ? undefined : Math.trunc(n);
+}
+
+/** A string, null (preserved), or undefined. */
+function asStringOrNull(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** An integer, null (preserved), or undefined. */
+function asIntOrNull(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  return asInt(value);
+}
+
+/**
+ * Normalize a status string to the {@link RunStatus} union.
+ *
+ * Only the exact canonical `active` is treated as active, matching the
+ * controller's active-mutation guard (`state.py` `_reject_non_active`), which
+ * fails closed on anything that is not exactly `"active"`. The controller never
+ * writes `running`/`in_progress`, so coercing those to active would fail open —
+ * presenting a run as active that the controller would refuse to mutate. They
+ * fall through to `unknown` (and surface an unrecognized-status diagnostic).
+ * Terminal spellings (`completed`/`canceled`) are tolerated because they map to
+ * a terminal state — the fail-closed direction.
+ */
 export function normalizeStatus(raw: string): RunStatus {
   switch (raw.trim().toLowerCase()) {
     case 'active':
-    case 'in_progress':
-    case 'running':
       return 'active';
     case 'complete':
     case 'completed':
@@ -196,6 +229,52 @@ function normalizeVerification(value: unknown): VerificationState {
   return state;
 }
 
+function normalizeCheckpoint(value: unknown): ReviewCheckpoint | undefined {
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+  const pathFingerprints: Record<string, string | null> = {};
+  const rawFps = value['path_fingerprints'];
+  if (isPlainObject(rawFps)) {
+    for (const [key, v] of Object.entries(rawFps)) {
+      if (typeof v === 'string') {
+        pathFingerprints[key] = v;
+      } else if (v === null) {
+        pathFingerprints[key] = null;
+      }
+    }
+  }
+  const checkpoint: {
+    id?: string;
+    capturedAt?: string;
+    headCommit?: string;
+    branch?: string;
+    baselineCommit?: string | null;
+    changedPaths: string[];
+    pathFingerprints: Record<string, string | null>;
+    previousCheckpointId?: string | null;
+    reviewContextMode?: string;
+  } = {
+    changedPaths: asStringArray(value['changed_paths']),
+    pathFingerprints
+  };
+  const id = asNonEmptyString(value['id']);
+  if (id) checkpoint.id = id;
+  const capturedAt = asNonEmptyString(value['captured_at']);
+  if (capturedAt) checkpoint.capturedAt = capturedAt;
+  const headCommit = asNonEmptyString(value['head_commit']);
+  if (headCommit) checkpoint.headCommit = headCommit;
+  const branch = asNonEmptyString(value['branch']);
+  if (branch) checkpoint.branch = branch;
+  const baselineCommit = asStringOrNull(value['baseline_commit']);
+  if (baselineCommit !== undefined) checkpoint.baselineCommit = baselineCommit;
+  const previousCheckpointId = asStringOrNull(value['previous_checkpoint_id']);
+  if (previousCheckpointId !== undefined) checkpoint.previousCheckpointId = previousCheckpointId;
+  const reviewContextMode = asNonEmptyString(value['review_context_mode']);
+  if (reviewContextMode) checkpoint.reviewContextMode = reviewContextMode;
+  return checkpoint;
+}
+
 function normalizeReviewRefs(value: unknown): ReviewRef[] {
   if (!Array.isArray(value)) {
     return [];
@@ -205,13 +284,22 @@ function normalizeReviewRefs(value: unknown): ReviewRef[] {
     if (!isPlainObject(entry)) {
       continue;
     }
-    const ref: { round?: number; path?: string; verdict?: string } = {};
+    const ref: {
+      round?: number;
+      path?: string;
+      verdict?: string;
+      delta?: boolean;
+      checkpoint?: ReviewCheckpoint;
+    } = {};
     const round = asNumber(entry['round']);
     if (round !== undefined) ref.round = round;
     const path = asNonEmptyString(entry['path']);
     if (path) ref.path = path;
     const verdict = asNonEmptyString(entry['verdict']);
     if (verdict) ref.verdict = verdict;
+    if (typeof entry['delta'] === 'boolean') ref.delta = entry['delta'];
+    const checkpoint = normalizeCheckpoint(entry['checkpoint']);
+    if (checkpoint) ref.checkpoint = checkpoint;
     refs.push(ref);
   }
   return refs;
@@ -225,6 +313,284 @@ function normalizeRisk(value: unknown): RiskInfo {
     requiresAdversarialReview: value['requires_adversarial_review'] === true,
     reasons: asStringArray(value['reasons'])
   };
+}
+
+/**
+ * Marker key, set on a normalized {@link CumulativeFinding} / acceptance
+ * criterion when the source array element was NOT a JSON object. The fail-closed
+ * gate helpers (workflow/findings.ts) treat such an entry as blocking, mirroring
+ * the reference, which fail-closes on non-dict ledger entries.
+ */
+export const MALFORMED_ENTRY_MARKER = '__semanticmatter_malformed__';
+
+const FINDING_KNOWN_KEYS = new Set([
+  'id',
+  'severity',
+  'category',
+  'status',
+  'round',
+  'round_opened',
+  'round_last_seen',
+  'origin',
+  'file',
+  'line_start',
+  'description',
+  'evidence',
+  'recommended_fix',
+  'source_id',
+  'resolved_at_round',
+  'resolution_source',
+  'legacy_id'
+]);
+
+function normalizeCumulativeFinding(value: unknown): CumulativeFinding {
+  if (!isPlainObject(value)) {
+    // Preserve the non-object signal so the gate fails closed on it.
+    return { raw: { [MALFORMED_ENTRY_MARKER]: true, value } };
+  }
+  // Preserve any unknown sub-fields verbatim for forward compatibility.
+  const extraRaw: Record<string, unknown> = {};
+  for (const [key, v] of Object.entries(value)) {
+    if (!FINDING_KNOWN_KEYS.has(key)) {
+      extraRaw[key] = v;
+    }
+  }
+  const finding: {
+    id?: string;
+    severity?: string;
+    category?: string;
+    status?: string;
+    round?: number;
+    roundOpened?: number;
+    roundLastSeen?: number;
+    origin?: string;
+    file?: string | null;
+    lineStart?: number | null;
+    description?: string;
+    evidence?: string;
+    recommendedFix?: string;
+    sourceId?: string;
+    resolvedAtRound?: number;
+    resolutionSource?: string;
+    legacyId?: string;
+    raw: Record<string, unknown>;
+  } = { raw: extraRaw };
+  const id = asNonEmptyString(value['id']);
+  if (id) finding.id = id;
+  const severity = asNonEmptyString(value['severity']);
+  if (severity) finding.severity = severity;
+  const category = asNonEmptyString(value['category']);
+  if (category) finding.category = category;
+  const status = asNonEmptyString(value['status']);
+  if (status) finding.status = status;
+  const round = asInt(value['round']);
+  if (round !== undefined) finding.round = round;
+  const roundOpened = asInt(value['round_opened']);
+  if (roundOpened !== undefined) finding.roundOpened = roundOpened;
+  const roundLastSeen = asInt(value['round_last_seen']);
+  if (roundLastSeen !== undefined) finding.roundLastSeen = roundLastSeen;
+  const origin = asNonEmptyString(value['origin']);
+  if (origin) finding.origin = origin;
+  const file = asStringOrNull(value['file']);
+  if (file !== undefined) finding.file = file;
+  const lineStart = asIntOrNull(value['line_start']);
+  if (lineStart !== undefined) finding.lineStart = lineStart;
+  const description = asString(value['description']);
+  if (description !== undefined) finding.description = description;
+  const evidence = asString(value['evidence']);
+  if (evidence !== undefined) finding.evidence = evidence;
+  const recommendedFix = asString(value['recommended_fix']);
+  if (recommendedFix !== undefined) finding.recommendedFix = recommendedFix;
+  const sourceId = asNonEmptyString(value['source_id']);
+  if (sourceId) finding.sourceId = sourceId;
+  const resolvedAtRound = asInt(value['resolved_at_round']);
+  if (resolvedAtRound !== undefined) finding.resolvedAtRound = resolvedAtRound;
+  const resolutionSource = asNonEmptyString(value['resolution_source']);
+  if (resolutionSource) finding.resolutionSource = resolutionSource;
+  const legacyId = asNonEmptyString(value['legacy_id']);
+  if (legacyId) finding.legacyId = legacyId;
+  return finding;
+}
+
+function normalizeCumulativeFindings(
+  value: unknown,
+  diagnostics: Diagnostic[]
+): CumulativeFinding[] {
+  if (Array.isArray(value)) {
+    return value.map(normalizeCumulativeFinding);
+  }
+  if (value === undefined || value === null) {
+    return [];
+  }
+  // Present but not a list. The controller scans a truthy-but-malformed ledger
+  // container and flags its contents (fail closed). Mirror that here by emitting
+  // a malformed sentinel so the shared evaluator keeps the run blocking instead
+  // of reading a corrupt container as "no findings".
+  diagnostics.push(
+    diag(
+      'run-state-malformed-cumulative-findings',
+      '"cumulative_findings" is not a JSON array; treating as a blocking malformed ledger',
+      'warning',
+      'cumulative_findings'
+    )
+  );
+  return [{ raw: { [MALFORMED_ENTRY_MARKER]: true, value } } as CumulativeFinding];
+}
+
+function normalizeAcceptanceCriterion(value: unknown): CumulativeAcceptanceCriterion {
+  if (!isPlainObject(value)) {
+    return { raw: { [MALFORMED_ENTRY_MARKER]: true, value } } as CumulativeAcceptanceCriterion;
+  }
+  const criterion: { id?: string; status?: string; evidence?: string; round?: number } = {};
+  const id = asNonEmptyString(value['id']);
+  if (id) criterion.id = id;
+  const status = asNonEmptyString(value['status']);
+  if (status) criterion.status = status;
+  const evidence = asString(value['evidence']);
+  if (evidence !== undefined) criterion.evidence = evidence;
+  const round = asInt(value['round']);
+  if (round !== undefined) criterion.round = round;
+  return criterion;
+}
+
+function normalizeAcceptanceCriteria(
+  value: unknown,
+  diagnostics: Diagnostic[]
+): CumulativeAcceptanceCriterion[] {
+  if (Array.isArray(value)) {
+    return value.map(normalizeAcceptanceCriterion);
+  }
+  if (value === undefined || value === null) {
+    return [];
+  }
+  // Present but not a list: fail closed like the controller's gate, which treats
+  // a malformed acceptance-criteria container as blocking rather than satisfied.
+  diagnostics.push(
+    diag(
+      'run-state-malformed-acceptance-criteria',
+      '"cumulative_acceptance_criteria" is not a JSON array; treating as a blocking malformed criterion',
+      'warning',
+      'cumulative_acceptance_criteria'
+    )
+  );
+  return [{ raw: { [MALFORMED_ENTRY_MARKER]: true, value } } as CumulativeAcceptanceCriterion];
+}
+
+const LEDGER_KNOWN_KEYS = new Set([
+  'fingerprint',
+  'status',
+  'finding_id',
+  'resolution',
+  'reason',
+  'evidence',
+  'justification'
+]);
+
+function normalizeReviewLedger(value: unknown): ReviewLedgerEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const entries: ReviewLedgerEntry[] = [];
+  for (const entry of value) {
+    if (!isPlainObject(entry)) {
+      continue;
+    }
+    const extraRaw: Record<string, unknown> = {};
+    for (const [key, v] of Object.entries(entry)) {
+      if (!LEDGER_KNOWN_KEYS.has(key)) {
+        extraRaw[key] = v;
+      }
+    }
+    const item: {
+      fingerprint?: string;
+      status?: string;
+      findingId?: string;
+      resolution?: string;
+      reason?: string;
+      evidence?: string;
+      justification?: string;
+      raw: Record<string, unknown>;
+    } = { raw: extraRaw };
+    const fingerprint = asNonEmptyString(entry['fingerprint']);
+    if (fingerprint) item.fingerprint = fingerprint;
+    const status = asNonEmptyString(entry['status']);
+    if (status) item.status = status;
+    const findingId = asNonEmptyString(entry['finding_id']);
+    if (findingId) item.findingId = findingId;
+    const resolution = asNonEmptyString(entry['resolution']);
+    if (resolution) item.resolution = resolution;
+    const reason = asNonEmptyString(entry['reason']);
+    if (reason) item.reason = reason;
+    const evidence = asNonEmptyString(entry['evidence']);
+    if (evidence) item.evidence = evidence;
+    const justification = asNonEmptyString(entry['justification']);
+    if (justification) item.justification = justification;
+    entries.push(item);
+  }
+  return entries;
+}
+
+function normalizeCodexRunTokens(value: unknown): CodexRunTokens | undefined {
+  if (!isPlainObject(value)) {
+    return undefined;
+  }
+  const tokens: { inputTokens?: number; outputTokens?: number; totalTokens?: number } = {};
+  const inputTokens = asInt(value['input_tokens']);
+  if (inputTokens !== undefined) tokens.inputTokens = inputTokens;
+  const outputTokens = asInt(value['output_tokens']);
+  if (outputTokens !== undefined) tokens.outputTokens = outputTokens;
+  const totalTokens = asInt(value['total_tokens']);
+  if (totalTokens !== undefined) tokens.totalTokens = totalTokens;
+  return tokens;
+}
+
+function normalizeCodexRuns(value: unknown): CodexRun[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const runs: CodexRun[] = [];
+  for (const entry of value) {
+    if (!isPlainObject(entry)) {
+      continue;
+    }
+    const run: {
+      phase?: string;
+      promptCharacters?: number;
+      outputCharacters?: number;
+      durationSeconds?: number;
+      model?: string;
+      reasoningEffort?: string;
+      verbosity?: string;
+      startedAt?: string;
+      eventsArtifact?: string;
+      outputArtifact?: string;
+      tokens?: CodexRunTokens;
+    } = {};
+    const phase = asNonEmptyString(entry['phase']);
+    if (phase) run.phase = phase;
+    const promptCharacters = asInt(entry['prompt_characters']);
+    if (promptCharacters !== undefined) run.promptCharacters = promptCharacters;
+    const outputCharacters = asInt(entry['output_characters']);
+    if (outputCharacters !== undefined) run.outputCharacters = outputCharacters;
+    const durationSeconds = asNumber(entry['duration_seconds']);
+    if (durationSeconds !== undefined) run.durationSeconds = durationSeconds;
+    const model = asNonEmptyString(entry['model']);
+    if (model) run.model = model;
+    const reasoningEffort = asNonEmptyString(entry['reasoning_effort']);
+    if (reasoningEffort) run.reasoningEffort = reasoningEffort;
+    const verbosity = asNonEmptyString(entry['verbosity']);
+    if (verbosity) run.verbosity = verbosity;
+    const startedAt = asNonEmptyString(entry['started_at']);
+    if (startedAt) run.startedAt = startedAt;
+    const eventsArtifact = asNonEmptyString(entry['events_artifact']);
+    if (eventsArtifact) run.eventsArtifact = eventsArtifact;
+    const outputArtifact = asNonEmptyString(entry['output_artifact']);
+    if (outputArtifact) run.outputArtifact = outputArtifact;
+    const tokens = normalizeCodexRunTokens(entry['tokens']);
+    if (tokens) run.tokens = tokens;
+    runs.push(run);
+  }
+  return runs;
 }
 
 function clampInt(value: number | undefined, fallback: number, min: number, max: number): number {
@@ -310,6 +676,20 @@ export function normalizeRunState(value: unknown): RunStateParseResult {
     risk: normalizeRisk(value['risk']),
     notes: asStringArray(value['notes']),
     completionGateFailures: asStringArray(value['completion_gate_failures']),
+    cumulativeFindings: normalizeCumulativeFindings(value['cumulative_findings'], diagnostics),
+    cumulativeAcceptanceCriteria: normalizeAcceptanceCriteria(
+      value['cumulative_acceptance_criteria'],
+      diagnostics
+    ),
+    reviewLedger: normalizeReviewLedger(value['review_ledger']),
+    codexRuns: normalizeCodexRuns(value['codex_runs']),
+    ...(asNonEmptyString(value['requested_mode'])
+      ? { requestedMode: asNonEmptyString(value['requested_mode']) }
+      : {}),
+    ...(asNonEmptyString(value['effective_mode'])
+      ? { effectiveMode: asNonEmptyString(value['effective_mode']) }
+      : {}),
+    modeReasons: asStringArray(value['mode_reasons']),
     raw: value
   };
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 
-import { normalizeReviewDocument } from '../src/workflow/reviews';
-import { RECOGNIZED_DISPOSITIONS } from '../src/types';
+import { latestReviewRef, normalizeReviewDocument } from '../src/workflow/reviews';
+import { RECOGNIZED_DISPOSITIONS, type ReviewRef } from '../src/types';
 
 describe('normalizeReviewDocument metadata', () => {
   it('parses verification_gaps and acceptance_criteria_assessment (§8)', () => {
@@ -49,6 +49,23 @@ describe('normalizeReviewDocument metadata', () => {
     assert.deepEqual(doc.findings, []);
     assert.deepEqual(doc.verificationGaps, []);
     assert.deepEqual(doc.acceptanceCriteriaAssessment, []);
+  });
+});
+
+describe('latestReviewRef (controller.py reviews[-1] parity)', () => {
+  it('returns undefined for an empty list', () => {
+    assert.equal(latestReviewRef([]), undefined);
+  });
+
+  it('returns the array tail, matching the controller, not the max round', () => {
+    // The controller uses reviews[-1] in both cmd_evaluate and
+    // compute_next_action. A later-appended review with a *lower* round must
+    // still win, so the gate reads the same review the controller does.
+    const reviews: ReviewRef[] = [
+      { round: 3, path: 'r3.json' },
+      { round: 1, path: 'r1-late.json' }
+    ];
+    assert.equal(latestReviewRef(reviews)?.path, 'r1-late.json');
   });
 });
 

@@ -22,7 +22,9 @@ export type Scenario =
   | 'blocked'
   | 'cancelled'
   | 'archived'
-  | 'malformed';
+  | 'malformed'
+  | 'cumulativeLedger'
+  | 'enhanceRigorous';
 
 export interface Fixtures {
   /** Resolved state home (`<root>/state`), to point `autonomousDev.stateHome` at. */
@@ -163,12 +165,27 @@ export function buildFixtures(): Fixtures {
   const root = mkdtempSync(join(tmpdir(), 'autodev-fixtures-'));
   const stateHome = join(root, 'state');
 
-  // 1. initialized — created, not yet enhanced → next: run-enhance.
+  // 1. initialized — created, no accepted spec. Default (standard) mode routes
+  //    straight to the specification step (controller.py compute_next_action
+  //    ~3124: enhance is a rigorous-only phase) → next: reconcile-spec.
   writeRun(
     stateHome,
     'initialized',
     baseState('initialized', {
       phase: 'initialized',
+      artifacts: { feature_request: 'feature-request.md' }
+    }),
+    { 'feature-request.md': FEATURE_MD }
+  );
+
+  // 1b. enhanceRigorous — rigorous mode with no enhance artifact yet → the only
+  //     path that routes to the enhance phase (controller.py ~3125).
+  writeRun(
+    stateHome,
+    'enhanceRigorous',
+    baseState('enhanceRigorous', {
+      phase: 'initialized',
+      effective_mode: 'rigorous',
       artifacts: { feature_request: 'feature-request.md' }
     }),
     { 'feature-request.md': FEATURE_MD }
@@ -218,13 +235,13 @@ export function buildFixtures(): Fixtures {
       review_round: 1,
       artifacts: { ...FULL_ARTIFACTS, review: 'review-01.codex.json' },
       verification: passingVerification(),
-      reviews: [{ round: 1, path: 'review-01.codex.json', verdict: 'changes_requested' }]
+      reviews: [{ round: 1, path: 'review-01.codex.json', verdict: 'changes_required' }]
     }),
     {
       ...FULL_ARTIFACT_FILES,
       'verification/unit.log': 'ok\n',
       'review-01.codex.json': JSON.stringify({
-        verdict: 'changes_requested',
+        verdict: 'changes_required',
         confidence: 0.7,
         summary: 'One correctness issue.',
         findings: [
@@ -274,7 +291,7 @@ export function buildFixtures(): Fixtures {
             phase: 'review',
             source: 'controller',
             type: 'review.completed',
-            payload: { verdict: 'changes_requested' }
+            payload: { verdict: 'changes_required' }
           }),
           // Structured disposition for F-1 — surfaced on the finding "when present"
           // (§9), distinct from the read-only triage-01.md markdown above.
@@ -383,6 +400,154 @@ export function buildFixtures(): Fixtures {
   // 10. malformed — invalid JSON must yield a diagnostic, not a crash.
   writeRun(stateHome, 'malformed', '{ this is not valid json ');
 
+  // 12. cumulativeLedger — exercises the v0.3.0 cumulative ledger surface:
+  //   * a resolved severe finding (released — must NOT show as blocking),
+  //   * an open critical finding (blocking), an open low finding (non-severe),
+  //   * mixed acceptance-criteria statuses (only `satisfied` is non-blocking),
+  //   * per-phase Codex usage with tokens, an effective workflow mode, and a
+  //     delta (round-2) review carrying a focused_full_fallback checkpoint.
+  // Completion must fail closed: 1 critical open + 2 unsatisfied criteria.
+  writeRun(
+    stateHome,
+    'cumulativeLedger',
+    baseState('cumulativeLedger', {
+      phase: 'review',
+      review_round: 2,
+      requested_mode: 'auto',
+      effective_mode: 'rigorous',
+      mode_reasons: ['Touches authentication'],
+      artifacts: { ...FULL_ARTIFACTS, review: 'review-02.codex.json' },
+      verification: passingVerification(),
+      reviews: [
+        {
+          round: 1,
+          path: 'review-01.codex.json',
+          verdict: 'changes_required',
+          delta: false,
+          checkpoint: {
+            id: 'review-01',
+            head_commit: 'aaaa1111',
+            branch: 'feature/thing',
+            baseline_commit: 'base0000',
+            changed_paths: ['src/app.ts'],
+            path_fingerprints: { 'src/app.ts': 'sha256:dead' }
+          }
+        },
+        {
+          round: 2,
+          path: 'review-02.codex.json',
+          verdict: 'changes_required',
+          delta: true,
+          checkpoint: {
+            id: 'review-02',
+            head_commit: 'bbbb2222',
+            branch: 'feature/thing',
+            baseline_commit: 'base0000',
+            changed_paths: ['src/app.ts', 'src/thing.ts'],
+            path_fingerprints: { 'src/app.ts': 'sha256:beef', 'src/thing.ts': 'sha256:cafe' },
+            previous_checkpoint_id: 'review-01',
+            review_context_mode: 'focused_full_fallback'
+          }
+        }
+      ],
+      cumulative_findings: [
+        {
+          id: 'F-1',
+          severity: 'high',
+          category: 'correctness',
+          status: 'resolved',
+          round_opened: 1,
+          round_last_seen: 2,
+          origin: 'full',
+          file: 'src/app.ts',
+          line_start: 42,
+          description: 'Off-by-one in the loop bound.',
+          resolved_at_round: 2,
+          resolution_source: 'review-02'
+        },
+        {
+          id: 'F-2',
+          severity: 'critical',
+          category: 'security',
+          status: 'open',
+          round_opened: 2,
+          round_last_seen: 2,
+          origin: 'delta',
+          file: 'src/thing.ts',
+          line_start: 7,
+          description: 'Unvalidated input reaches the query builder.'
+        },
+        {
+          id: 'F-3',
+          severity: 'low',
+          category: 'style',
+          status: 'open',
+          round_opened: 1,
+          round_last_seen: 2,
+          origin: 'full',
+          description: 'Minor naming nit.'
+        }
+      ],
+      cumulative_acceptance_criteria: [
+        { id: 'AC-1', status: 'satisfied', evidence: 'Covered by unit test.', round: 2 },
+        { id: 'AC-2', status: 'not_satisfied', evidence: 'No persistence test.', round: 2 },
+        { id: 'AC-3', status: 'partially_satisfied', evidence: 'Happy path only.', round: 2 }
+      ],
+      codex_runs: [
+        {
+          phase: 'enhance',
+          model: 'gpt-5-codex',
+          duration_seconds: 12.5,
+          prompt_characters: 1000,
+          output_characters: 2000,
+          tokens: { input_tokens: 500, output_tokens: 800, total_tokens: 1300 }
+        },
+        {
+          phase: 'review',
+          model: 'gpt-5-codex',
+          duration_seconds: 8.25,
+          prompt_characters: 1500,
+          output_characters: 900,
+          tokens: { input_tokens: 700, output_tokens: 400, total_tokens: 1100 }
+        }
+      ]
+    }),
+    {
+      ...FULL_ARTIFACT_FILES,
+      'verification/unit.log': 'ok\n',
+      'review-01.codex.json': JSON.stringify({
+        verdict: 'changes_required',
+        confidence: 0.6,
+        summary: 'Round 1 found a correctness issue.',
+        findings: [
+          {
+            id: 'F-1',
+            severity: 'high',
+            category: 'correctness',
+            file: 'src/app.ts',
+            line_start: 42,
+            description: 'Off-by-one in the loop bound.'
+          }
+        ]
+      }),
+      'review-02.codex.json': JSON.stringify({
+        verdict: 'changes_required',
+        confidence: 0.55,
+        summary: 'Round 2 resolved F-1 but found a security issue.',
+        findings: [
+          {
+            id: 'F-2',
+            severity: 'critical',
+            category: 'security',
+            file: 'src/thing.ts',
+            line_start: 7,
+            description: 'Unvalidated input reaches the query builder.'
+          }
+        ]
+      })
+    }
+  );
+
   // 11. legacy — in-repo `.ai/autonomous-development` with markdown-only triage.
   const legacyRepoRoot = join(root, 'legacy-repo');
   const legacyDir = join(legacyRepoRoot, '.ai', 'autonomous-development');
@@ -393,7 +558,7 @@ export function buildFixtures(): Fixtures {
         phase: 'review',
         artifacts: { ...FULL_ARTIFACTS, review: 'review-01.codex.json' },
         verification: passingVerification(),
-        reviews: [{ round: 1, verdict: 'changes_requested' }]
+        reviews: [{ round: 1, verdict: 'changes_required' }]
       }),
       null,
       2
@@ -415,7 +580,9 @@ export function buildFixtures(): Fixtures {
       blocked: 'blocked',
       cancelled: 'cancelled',
       archived: 'archived',
-      malformed: 'malformed'
+      malformed: 'malformed',
+      cumulativeLedger: 'cumulativeLedger',
+      enhanceRigorous: 'enhanceRigorous'
     },
     runDir: (runId: string) => join(stateHome, 'repositories', REPO_ID, 'runs', runId),
     cleanup: () => rmSync(root, { recursive: true, force: true })

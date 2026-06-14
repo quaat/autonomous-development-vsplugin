@@ -14,6 +14,8 @@ export type DiagnosticCode =
   | 'run-state-missing-status'
   | 'run-state-unknown-status'
   | 'run-state-unsupported-schema-version'
+  | 'run-state-malformed-cumulative-findings'
+  | 'run-state-malformed-acceptance-criteria'
   | 'run-state-field-type'
   | 'metadata-unreadable'
   | 'review-unreadable'

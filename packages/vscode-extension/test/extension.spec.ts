@@ -112,8 +112,14 @@ describe('discovery and grouping', () => {
 });
 
 describe('per-scenario workflow model (single shared evaluator)', () => {
-  it('initialized → run-enhance', () => {
-    assert.equal(run('initialized').model?.recommendedNextAction.code, 'run-enhance');
+  it('initialized (standard mode) → reconcile-spec', () => {
+    // Default mode is "standard"; enhance is a rigorous-only phase
+    // (controller.py compute_next_action), so a fresh run reconciles the spec.
+    assert.equal(run('initialized').model?.recommendedNextAction.code, 'reconcile-spec');
+  });
+
+  it('enhanceRigorous (rigorous mode, no enhance artifact) → run-enhance', () => {
+    assert.equal(run('enhanceRigorous').model?.recommendedNextAction.code, 'run-enhance');
   });
 
   it('implementing → run-verification', () => {

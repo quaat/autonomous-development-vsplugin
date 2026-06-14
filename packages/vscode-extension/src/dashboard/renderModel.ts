@@ -18,6 +18,11 @@ import {
   parseReviewText,
   resolveArtifactPath,
   summarizeCodexArtifact,
+  type AcceptanceCriteriaModel,
+  type CodexUsageModel,
+  type CumulativeAcceptanceCriterion,
+  type CumulativeFinding,
+  type CumulativeFindingsModel,
   type DiscoveredRun,
   type FindingDisposition,
   type LoadedEventLog,
@@ -25,7 +30,10 @@ import {
 } from '@semanticmatter/core';
 
 import type {
+  DashboardAcceptanceCriteria,
   DashboardArtifact,
+  DashboardCodexUsage,
+  DashboardCumulativeFindings,
   DashboardDiagnostic,
   DashboardReviewRound,
   DashboardView
@@ -183,6 +191,74 @@ function reviewRound(
   };
 }
 
+/**
+ * Map the cumulative finding ledger. The blocking decision is NOT re-derived
+ * here: a finding is blocking iff the core model placed it in `blockingSevere`
+ * (reference identity, since the model returns entries from the same array).
+ */
+function cumulativeFindingsView(
+  all: readonly CumulativeFinding[],
+  model: CumulativeFindingsModel
+): DashboardCumulativeFindings {
+  const blockingSet = new Set(model.blockingSevere);
+  return {
+    total: model.total,
+    blockingSevereCount: model.blockingSevereCount,
+    resolvedCount: model.resolvedCount,
+    openCount: model.openCount,
+    findings: all.map((f) => ({
+      ...(f.id !== undefined ? { id: f.id } : {}),
+      ...(f.severity !== undefined ? { severity: f.severity } : {}),
+      ...(f.category !== undefined ? { category: f.category } : {}),
+      ...(f.status !== undefined ? { status: f.status } : {}),
+      ...(f.file !== undefined ? { file: f.file } : {}),
+      ...(f.lineStart !== undefined ? { line: f.lineStart } : {}),
+      ...(f.description !== undefined ? { description: f.description } : {}),
+      ...(f.roundOpened !== undefined ? { roundOpened: f.roundOpened } : {}),
+      ...(f.roundLastSeen !== undefined ? { roundLastSeen: f.roundLastSeen } : {}),
+      ...(f.origin !== undefined ? { origin: f.origin } : {}),
+      blocking: blockingSet.has(f),
+      ...(f.resolvedAtRound !== undefined ? { resolvedAtRound: f.resolvedAtRound } : {}),
+      ...(f.resolutionSource !== undefined ? { resolutionSource: f.resolutionSource } : {})
+    }))
+  };
+}
+
+/** Map the cumulative acceptance-criteria ledger (blocking = status != satisfied). */
+function acceptanceCriteriaView(
+  all: readonly CumulativeAcceptanceCriterion[],
+  model: AcceptanceCriteriaModel
+): DashboardAcceptanceCriteria {
+  const blockingSet = new Set(model.blocking);
+  return {
+    total: model.total,
+    satisfiedCount: model.satisfiedCount,
+    blockingCount: model.blockingCount,
+    criteria: all.map((c) => ({
+      ...(c.id !== undefined ? { id: c.id } : {}),
+      ...(c.status !== undefined ? { status: c.status } : {}),
+      ...(c.evidence !== undefined ? { evidence: c.evidence } : {}),
+      ...(c.round !== undefined ? { round: c.round } : {}),
+      blocking: blockingSet.has(c)
+    }))
+  };
+}
+
+function codexUsageView(model: CodexUsageModel): DashboardCodexUsage {
+  return {
+    runs: model.runs.map((r) => ({
+      ...(r.phase !== undefined ? { phase: r.phase } : {}),
+      ...(r.model !== undefined ? { model: r.model } : {}),
+      ...(r.durationSeconds !== undefined ? { durationSeconds: r.durationSeconds } : {}),
+      ...(r.promptCharacters !== undefined ? { promptCharacters: r.promptCharacters } : {}),
+      ...(r.outputCharacters !== undefined ? { outputCharacters: r.outputCharacters } : {}),
+      ...(r.tokens?.totalTokens !== undefined ? { totalTokens: r.tokens.totalTokens } : {})
+    })),
+    totalDurationSeconds: model.totalDurationSeconds,
+    totalTokens: model.totalTokens
+  };
+}
+
 /** Build the dashboard view for a run. Returns a diagnostics-only shell when unparsed. */
 export function toDashboardView(run: DiscoveredRun, eventLog: LoadedEventLog): DashboardView {
   const diagnostics = collectDiagnostics(run, eventLog);
@@ -219,6 +295,15 @@ export function toDashboardView(run: DiscoveredRun, eventLog: LoadedEventLog): D
       review: { hasReviews: false, severeFindingCount: 0, rounds: [], triageFiles: [] },
       adversarial: { required: false, satisfied: true, reasons: [], rounds: [] },
       risk: { requiresAdversarialReview: false, reasons: [] },
+      cumulativeFindings: {
+        total: 0,
+        blockingSevereCount: 0,
+        resolvedCount: 0,
+        openCount: 0,
+        findings: []
+      },
+      acceptanceCriteria: { total: 0, satisfiedCount: 0, blockingCount: 0, criteria: [] },
+      codexUsage: { runs: [], totalDurationSeconds: 0, totalTokens: 0 },
       gateFailures: [],
       gatesPass: false,
       nextAction: { code: 'none', message: '' },
@@ -337,6 +422,25 @@ export function toDashboardView(run: DiscoveredRun, eventLog: LoadedEventLog): D
       rounds: state.adversarialReviews.map((r) => reviewRound(runDir, r, dispositions))
     },
     risk: model.riskClassification,
+    ...(model.effectiveMode !== undefined ? { effectiveMode: model.effectiveMode } : {}),
+    cumulativeFindings: cumulativeFindingsView(state.cumulativeFindings, model.cumulativeFindings),
+    acceptanceCriteria: acceptanceCriteriaView(
+      state.cumulativeAcceptanceCriteria,
+      model.acceptanceCriteria
+    ),
+    ...(model.checkpoint !== undefined
+      ? {
+          checkpoint: {
+            ...(model.checkpoint.id !== undefined ? { id: model.checkpoint.id } : {}),
+            ...(model.checkpoint.reviewContextMode !== undefined
+              ? { reviewContextMode: model.checkpoint.reviewContextMode }
+              : {}),
+            changedPathsCount: model.checkpoint.changedPathsCount,
+            isDelta: model.checkpoint.isDelta
+          }
+        }
+      : {}),
+    codexUsage: codexUsageView(model.codexUsage),
     gateFailures: model.completionGateFailures.map((g) => ({ code: g.code, message: g.message })),
     gatesPass: model.gatesPass,
     nextAction: model.recommendedNextAction,

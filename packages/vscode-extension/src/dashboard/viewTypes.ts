@@ -64,6 +64,82 @@ export interface DashboardAcceptanceCriterion {
   readonly evidence?: string;
 }
 
+/**
+ * One entry of the cumulative finding ledger (the authoritative, full-then-delta
+ * merged ledger — distinct from the per-round review findings above). Carries
+ * resolution provenance so the UI can show resolved findings as released rather
+ * than blocking.
+ */
+export interface DashboardCumulativeFinding {
+  readonly id?: string;
+  readonly severity?: string;
+  readonly category?: string;
+  readonly status?: string;
+  readonly file?: string | null;
+  readonly line?: number | null;
+  readonly description?: string;
+  readonly roundOpened?: number;
+  readonly roundLastSeen?: number;
+  readonly origin?: string;
+  /** True when this finding is severe AND unresolved (blocks completion). */
+  readonly blocking: boolean;
+  /** Round a delta review resolved this finding, when applicable. */
+  readonly resolvedAtRound?: number;
+  /** `review-NN` that resolved it, when applicable. */
+  readonly resolutionSource?: string;
+}
+
+export interface DashboardCumulativeFindings {
+  readonly total: number;
+  readonly blockingSevereCount: number;
+  readonly resolvedCount: number;
+  readonly openCount: number;
+  readonly findings: readonly DashboardCumulativeFinding[];
+}
+
+/** One entry of the cumulative acceptance-criteria ledger. */
+export interface DashboardCumulativeAcceptanceCriterion {
+  readonly id?: string;
+  readonly status?: string;
+  readonly evidence?: string;
+  readonly round?: number;
+  /** True when status is not exactly `satisfied` (blocks completion, fail closed). */
+  readonly blocking: boolean;
+}
+
+export interface DashboardAcceptanceCriteria {
+  readonly total: number;
+  readonly satisfiedCount: number;
+  readonly blockingCount: number;
+  readonly criteria: readonly DashboardCumulativeAcceptanceCriterion[];
+}
+
+/** Latest review checkpoint (changed-since-previous-review delta context). */
+export interface DashboardCheckpoint {
+  readonly id?: string;
+  /** "focused_full_fallback" when the delta could not be computed exactly. */
+  readonly reviewContextMode?: string;
+  readonly changedPathsCount: number;
+  /** True for a delta (round 2+) review; false for the round-1 full review. */
+  readonly isDelta: boolean;
+}
+
+/** Per-phase Codex usage record (read-only telemetry from the controller). */
+export interface DashboardCodexRun {
+  readonly phase?: string;
+  readonly model?: string;
+  readonly durationSeconds?: number;
+  readonly promptCharacters?: number;
+  readonly outputCharacters?: number;
+  readonly totalTokens?: number;
+}
+
+export interface DashboardCodexUsage {
+  readonly runs: readonly DashboardCodexRun[];
+  readonly totalDurationSeconds: number;
+  readonly totalTokens: number;
+}
+
 export interface DashboardReviewRound {
   readonly round?: number;
   readonly path?: string;
@@ -146,6 +222,16 @@ export interface DashboardView {
     readonly requiresAdversarialReview: boolean;
     readonly reasons: readonly string[];
   };
+  /** Effective workflow mode (auto-resolved), when the controller recorded one. */
+  readonly effectiveMode?: string;
+  /** Authoritative cumulative finding ledger (blocking vs resolved). */
+  readonly cumulativeFindings: DashboardCumulativeFindings;
+  /** Cumulative acceptance-criteria ledger (every criterion must be satisfied). */
+  readonly acceptanceCriteria: DashboardAcceptanceCriteria;
+  /** Latest review checkpoint, when one was captured. */
+  readonly checkpoint?: DashboardCheckpoint;
+  /** Per-phase Codex usage telemetry. */
+  readonly codexUsage: DashboardCodexUsage;
   readonly gateFailures: readonly DashboardGate[];
   readonly gatesPass: boolean;
   readonly nextAction: { readonly code: string; readonly message: string };

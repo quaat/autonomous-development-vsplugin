@@ -16,14 +16,27 @@ export type {
   VerificationCheck,
   VerificationState,
   ReviewRef,
+  ReviewCheckpoint,
   RiskInfo,
   RunState,
   ReviewFinding,
   ReviewDocument,
   AcceptanceCriterionAssessment,
-  FindingDisposition
+  FindingDisposition,
+  CumulativeFinding,
+  CumulativeAcceptanceCriterion,
+  ReviewLedgerEntry,
+  CodexRun,
+  CodexRunTokens
 } from './types';
-export { TERMINAL_STATUSES, SEVERE_FINDING_SEVERITIES, RECOGNIZED_DISPOSITIONS } from './types';
+export {
+  TERMINAL_STATUSES,
+  SEVERE_FINDING_SEVERITIES,
+  NON_SEVERE_SEVERITIES,
+  NON_BLOCKING_TRIAGE_STATUSES,
+  SATISFIED_ACCEPTANCE_STATUS,
+  RECOGNIZED_DISPOSITIONS
+} from './types';
 
 export { diag, type Diagnostic, type DiagnosticCode, type DiagnosticSeverity } from './diagnostics';
 
@@ -38,6 +51,7 @@ export {
   normalizeRunState,
   parseRunStateText,
   normalizeStatus,
+  MALFORMED_ENTRY_MARKER,
   type RunStateParseResult
 } from './runState';
 
@@ -90,8 +104,21 @@ export {
   type WorkflowModel,
   type ReviewBudget,
   type ReviewSummaryModel,
-  type AdversarialSummaryModel
+  type AdversarialSummaryModel,
+  type CumulativeFindingsModel,
+  type AcceptanceCriteriaModel,
+  type CheckpointModel,
+  type CodexUsageModel
 } from './workflow/evaluator';
+export {
+  cumulativeUnresolvedSevere,
+  blockingAcceptanceCriteria,
+  describeBlockingFindings,
+  describeBlockingAcceptanceCriteria,
+  isSevereCumulativeFinding,
+  isFindingReleased,
+  isFindingResolved
+} from './workflow/findings';
 export { summarizeVerification, type VerificationSummary } from './workflow/verification';
 export {
   latestReviewRef,

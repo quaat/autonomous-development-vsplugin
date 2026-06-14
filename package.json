@@ -1,6 +1,6 @@
 {
   "name": "semanticmatter-autonomous-development",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "VS Code extension: a read-only observer and visualization control plane for quaat/autonomous-development workflow runs.",
   "private": true,
   "license": "MIT",
@@ -21,7 +21,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "npm run build:libs && npm run test --workspace packages/protocol && npm run test --workspace packages/core",
+    "verify:reference": "node scripts/verify-reference.mjs",
+    "test": "npm run verify:reference && npm run build:libs && npm run test --workspace packages/protocol && npm run test --workspace packages/core",
     "test:integration": "npm run build:libs && npm run test:integration --workspace packages/vscode-extension",
     "package": "npm run build:libs && npm run package --workspace packages/vscode-extension"
   },

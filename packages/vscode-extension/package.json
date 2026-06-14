@@ -2,13 +2,25 @@
   "name": "semanticmatter-autonomous-development",
   "displayName": "SemanticMatter Autonomous Development",
   "description": "Read-only observer and visualization control plane for quaat/autonomous-development workflow runs.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "semanticmatter",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/semanticmatter/autodev-vscode.git"
   },
+  "homepage": "https://github.com/semanticmatter/autodev-vscode#readme",
+  "bugs": {
+    "url": "https://github.com/semanticmatter/autodev-vscode/issues"
+  },
+  "qna": "https://github.com/semanticmatter/autodev-vscode/issues",
+  "keywords": [
+    "autonomous-development",
+    "code-review",
+    "workflow",
+    "observability",
+    "codex"
+  ],
   "engines": {
     "vscode": "^1.85.0",
     "node": ">=18.0.0"
